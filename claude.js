@@ -1,4 +1,5 @@
-// Talks to the Claude API. Runs in the background service worker only.
+// Talks to the Claude API. Runs in the background service worker
+// (and the options page, for the key test).
 
 const API_BASE = "https://api.anthropic.com/v1";
 const API_VERSION = "2026-10-21";
@@ -13,7 +14,8 @@ const FALLBACK_MODELS = new Set([
   "claude-sonnet-5-5",
 ]);
 
-const REQUEST_TIMEOUT_MS = 180_000;
+// Give up if the stream goes quiet for this long.
+const IDLE_TIMEOUT_MS = 90_000;
 
 export class ApiError extends Error {
   constructor(kind, message, status) {
@@ -31,34 +33,9 @@ For each region:
 - box: a box around the region's text area, as fractions (0 to 1) of the full screenshot's width and height. x and y are the top-left corner. Cover the text the reader would want hidden by the translation, staying inside the bubble.
 - kind: what the region is.
 - japanese: the text exactly as written, with line breaks removed. Vertical text reads top to bottom, columns right to left.
-- reading: the whole line in hiragana.
 - english: a natural, conversational translation that keeps the character's tone. Keep it short enough to fit in the bubble.
-- words: the line split into words in order, particles included. For each word give its dictionary reading in hiragana, a short English meaning, the part of speech, and one entry per kanji with that kanji's core meaning (empty list if the word has no kanji).
 
 List regions in Japanese reading order: panels right to left, top to bottom. Skip text cut off so badly at the screenshot edge that it can't be read. If there is no Japanese manga text, return an empty list.`;
-
-const KANJI_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["character", "meaning"],
-  properties: {
-    character: { type: "string" },
-    meaning: { type: "string" },
-  },
-};
-
-const WORD_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["word", "reading", "meaning", "partOfSpeech", "kanji"],
-  properties: {
-    word: { type: "string" },
-    reading: { type: "string" },
-    meaning: { type: "string" },
-    partOfSpeech: { type: "string" },
-    kanji: { type: "array", items: KANJI_SCHEMA },
-  },
-};
 
 const RESULT_SCHEMA = {
   type: "object",
@@ -70,7 +47,7 @@ const RESULT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["box", "kind", "japanese", "reading", "english", "words"],
+        required: ["box", "kind", "japanese", "english"],
         properties: {
           box: {
             type: "object",
@@ -88,9 +65,7 @@ const RESULT_SCHEMA = {
             enum: ["speech", "thought", "narration", "sfx", "sign"],
           },
           japanese: { type: "string" },
-          reading: { type: "string" },
           english: { type: "string" },
-          words: { type: "array", items: WORD_SCHEMA },
         },
       },
     },
@@ -109,22 +84,31 @@ function headers(apiKey, betas = []) {
   return h;
 }
 
-async function request(path, init) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal });
-  } catch (err) {
-    if (err.name === "AbortError") {
-      throw new ApiError("timeout", "Claude took too long to answer. Try again.");
-    }
-    throw new ApiError("network", "Couldn't reach the Claude API. Check your internet connection.");
-  } finally {
+// fetch() with a timeout that resets whenever data arrives.
+function idleTimer(controller) {
+  let timer;
+  const reset = () => {
     clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
+  };
+  reset();
+  return { reset, stop: () => clearTimeout(timer) };
+}
+
+async function send(path, init, controller) {
+  try {
+    return await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal });
+  } catch (err) {
+    throw networkError(err);
   }
-  if (!res.ok) throw await toApiError(res);
-  return res.json();
+}
+
+function networkError(err) {
+  if (err instanceof ApiError) return err;
+  if (err.name === "AbortError") {
+    return new ApiError("timeout", "Claude stopped responding. Try again.");
+  }
+  return new ApiError("network", "Couldn't reach the Claude API. Check your internet connection.");
 }
 
 async function toApiError(res) {
@@ -156,15 +140,100 @@ async function toApiError(res) {
   }
 }
 
+// Errors that arrive inside a stream after a 200 response.
+function streamError(error) {
+  const type = error?.type ?? "";
+  if (type === "overloaded_error") {
+    return new ApiError("overloaded", "Claude is overloaded right now. Try again shortly.");
+  }
+  if (type === "rate_limit_error") {
+    return new ApiError("rate_limit", "Rate limit reached. Wait a moment and try again.");
+  }
+  return new ApiError("server", `Claude API error: ${error?.message ?? type ?? "unknown"}`);
+}
+
+// Pulls each finished region object out of the partial JSON text
+// {"regions":[{...},{...}, ...  as it streams in.
+class RegionExtractor {
+  constructor(onRegion) {
+    this.onRegion = onRegion;
+    this.text = "";
+    this.pos = 0;
+    this.inArray = false;
+    this.done = false;
+    this.depth = 0;
+    this.start = -1;
+    this.inString = false;
+    this.escaped = false;
+  }
+
+  push(chunk) {
+    this.text += chunk;
+    for (; this.pos < this.text.length && !this.done; this.pos++) {
+      const c = this.text[this.pos];
+      if (this.inString) {
+        if (this.escaped) this.escaped = false;
+        else if (c === "\\") this.escaped = true;
+        else if (c === '"') this.inString = false;
+        continue;
+      }
+      if (c === '"') {
+        this.inString = true;
+      } else if (!this.inArray) {
+        if (c === "[") this.inArray = true;
+      } else if (c === "{" || c === "[") {
+        if (this.depth === 0) this.start = this.pos;
+        this.depth++;
+      } else if (c === "}" || c === "]") {
+        if (this.depth === 0) {
+          this.done = true; // closing bracket of the regions array
+        } else if (--this.depth === 0) {
+          try {
+            this.onRegion(JSON.parse(this.text.slice(this.start, this.pos + 1)));
+          } catch (err) {
+            console.warn("Yomu: skipped a region that didn't parse", err);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Yields parsed server-sent events from a streaming response.
+async function* readEvents(res, onData) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    onData();
+    buffer += decoder.decode(value, { stream: true });
+    let split;
+    while ((split = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      const data = raw
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (data) yield JSON.parse(data);
+    }
+  }
+}
+
 /**
- * Sends one screenshot to Claude and returns { regions: [...] }.
+ * Streams one screenshot through Claude. Calls onRegion for each text
+ * region as soon as it's complete. Resolves with { regions, stats }.
  * image: { mediaType, data } where data is base64 without the data: prefix.
  */
-export async function translateImage({ apiKey, model, effort, image }) {
+export async function translateImage({ apiKey, model, effort, image, onRegion }) {
   const useFallback = FALLBACK_MODELS.has(model);
   const body = {
     model,
     max_tokens: 16000,
+    stream: true,
     system: SYSTEM_PROMPT,
     messages: [
       {
@@ -185,28 +254,83 @@ export async function translateImage({ apiKey, model, effort, image }) {
   };
   if (useFallback) body.fallbacks = "default";
 
-  const data = await request("/messages", {
-    method: "POST",
-    headers: headers(apiKey, useFallback ? ["server-side-fallback-2026-07-01"] : []),
-    body: JSON.stringify(body),
+  const started = performance.now();
+  const stats = { model, inputTokens: 0, outputTokens: 0, firstByteMs: 0, firstRegionMs: 0, totalMs: 0 };
+  const regions = [];
+  const extractor = new RegionExtractor((region) => {
+    if (!region?.box || typeof region.english !== "string") return;
+    if (!regions.length) stats.firstRegionMs = performance.now() - started;
+    regions.push(region);
+    onRegion?.(region);
   });
 
-  if (data.stop_reason === "refusal") {
+  const controller = new AbortController();
+  const timer = idleTimer(controller);
+  let stopReason = null;
+
+  try {
+    const res = await send(
+      "/messages",
+      {
+        method: "POST",
+        headers: headers(apiKey, useFallback ? ["server-side-fallback-2026-07-01"] : []),
+        body: JSON.stringify(body),
+      },
+      controller
+    );
+    if (!res.ok) throw await toApiError(res);
+    stats.firstByteMs = performance.now() - started;
+
+    for await (const event of readEvents(res, timer.reset)) {
+      switch (event.type) {
+        case "message_start":
+          stats.model = event.message?.model ?? model;
+          stats.inputTokens = event.message?.usage?.input_tokens ?? 0;
+          break;
+        case "content_block_start":
+          if (event.content_block?.type === "fallback") {
+            console.info("Yomu: Claude handed this page to a fallback model", event.content_block);
+          }
+          break;
+        case "content_block_delta":
+          if (event.delta?.type === "text_delta") extractor.push(event.delta.text);
+          break;
+        case "message_delta":
+          stopReason = event.delta?.stop_reason ?? stopReason;
+          stats.outputTokens = event.usage?.output_tokens ?? stats.outputTokens;
+          break;
+        case "error":
+          throw streamError(event.error);
+      }
+    }
+  } catch (err) {
+    throw networkError(err);
+  } finally {
+    timer.stop();
+  }
+
+  stats.totalMs = performance.now() - started;
+
+  if (stopReason === "refusal" && !regions.length) {
     throw new ApiError("refusal", "Claude declined to translate this page.");
   }
-  if (data.stop_reason === "max_tokens") {
+  if (stopReason === "max_tokens" && !regions.length) {
     throw new ApiError("truncated", "This view has too much text to translate at once. Zoom in so less is on screen, then try again.");
   }
-  const text = data.content?.find((b) => b.type === "text")?.text;
-  if (!text) throw new ApiError("empty", "Claude returned no translation.");
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new ApiError("parse", "Claude's answer wasn't valid JSON. Try again.");
+  if (!extractor.inArray && !regions.length) {
+    throw new ApiError("empty", "Claude returned no translation. Try again.");
   }
+  return { regions, stopReason, stats };
 }
 
 /** Checks a key without spending tokens. */
 export async function testApiKey(apiKey) {
-  await request("/models?limit=1", { method: "GET", headers: headers(apiKey) });
+  const controller = new AbortController();
+  const timer = idleTimer(controller);
+  try {
+    const res = await send("/models?limit=1", { method: "GET", headers: headers(apiKey) }, controller);
+    if (!res.ok) throw await toApiError(res);
+  } finally {
+    timer.stop();
+  }
 }

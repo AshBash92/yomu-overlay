@@ -39,5 +39,5 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 
 ## Debugging
 
-- Errors from the background worker: `brave://extensions` → Yomu Overlay → **Inspect views: service worker** → Console.
+- Background worker logs (timing for each translation, plus errors): `brave://extensions` → Yomu Overlay → click the blue **service worker** link. If it says "(inactive)", press Alt+T first.
 - Errors from the overlay: open DevTools (F12) on the manga tab → Console.

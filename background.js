@@ -1,5 +1,5 @@
 // Background service worker: handles hotkeys, takes the screenshot,
-// calls Claude, and hands the result to the content script.
+// calls Claude, and hands each bubble to the content script as it arrives.
 
 import { translateImage, ApiError } from "./claude.js";
 import { getSettings } from "./settings.js";
@@ -31,9 +31,19 @@ function sendToTab(tabId, message) {
   return chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
 }
 
+// Brave/Chrome stop an idle extension worker after 30 seconds. Calling any
+// extension API resets that clock, so ping one while a request is running.
+function keepAlive() {
+  const id = setInterval(() => chrome.runtime.getPlatformInfo(), 20_000);
+  return () => clearInterval(id);
+}
+
+const ms = (n) => `${(n / 1000).toFixed(1)}s`;
+
 async function translateTab(tab) {
   if (busyTabs.has(tab.id)) return;
   busyTabs.add(tab.id);
+  const stopKeepAlive = keepAlive();
   setBadge(tab.id, "…", "#555");
 
   try {
@@ -52,23 +62,41 @@ async function translateTab(tab) {
       return;
     }
 
+    const t0 = performance.now();
     // Clear old overlays first so they don't end up in the screenshot,
     // and remember the scroll position the screenshot was taken at.
     const view = await chrome.tabs.sendMessage(tab.id, { type: "prepare-capture" });
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 90 });
-    await sendToTab(tab.id, { type: "loading" });
+    const tCapture = performance.now();
+    await sendToTab(tab.id, { type: "start", view });
 
     const image = await shrinkImage(dataUrl, MAX_IMAGE_EDGE);
-    const result = await translateImage({ ...settings, image });
+    const tShrink = performance.now();
 
-    await sendToTab(tab.id, { type: "render", regions: result.regions ?? [], view });
+    const { regions, stopReason, stats } = await translateImage({
+      ...settings,
+      image,
+      onRegion: (region) => sendToTab(tab.id, { type: "region", region }),
+    });
+
+    const totalMs = performance.now() - t0;
+    console.log(
+      `[yomu] ${regions.length} regions in ${ms(totalMs)} | ` +
+        `capture ${ms(tCapture - t0)}, resize ${ms(tShrink - tCapture)} (${image.width}x${image.height}), ` +
+        `Claude first byte ${ms(stats.firstByteMs)}, first bubble ${ms(stats.firstRegionMs)}, done ${ms(stats.totalMs)} | ` +
+        `${stats.model}, effort ${settings.effort}, ${stats.inputTokens} in / ${stats.outputTokens} out tokens, stop: ${stopReason}`
+    );
+
+    const note = stopReason === "max_tokens" ? " Some text was cut off; zoom in and try again." : "";
+    await sendToTab(tab.id, { type: "done", count: regions.length, seconds: totalMs / 1000, note });
     setBadge(tab.id, "");
   } catch (err) {
-    console.error("Yomu translate failed:", err);
+    console.error("[yomu] translate failed:", err);
     const message = err instanceof ApiError ? err.message : `Something went wrong: ${err.message}`;
     await sendToTab(tab.id, { type: "error", message });
     setBadge(tab.id, "!", "#c62828", message);
   } finally {
+    stopKeepAlive();
     busyTabs.delete(tab.id);
   }
 }
@@ -82,16 +110,17 @@ function setBadge(tabId, text, color, title) {
 async function shrinkImage(dataUrl, maxEdge) {
   const blob = await (await fetch(dataUrl)).blob();
   const bitmap = await createImageBitmap(blob);
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const { width, height } = bitmap;
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
   if (scale === 1) {
     bitmap.close();
-    return { mediaType: "image/jpeg", data: dataUrl.slice(dataUrl.indexOf(",") + 1) };
+    return { mediaType: "image/jpeg", data: dataUrl.slice(dataUrl.indexOf(",") + 1), width, height };
   }
-  const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+  const canvas = new OffscreenCanvas(Math.round(width * scale), Math.round(height * scale));
   canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   const out = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
-  return { mediaType: "image/jpeg", data: await blobToBase64(out) };
+  return { mediaType: "image/jpeg", data: await blobToBase64(out), width: canvas.width, height: canvas.height };
 }
 
 async function blobToBase64(blob) {

@@ -92,34 +92,62 @@
     layer.replaceChildren();
   }
 
-  function render(regions, view) {
+  // State for the translation in progress.
+  let view = null;
+  let watchdog;
+
+  // If the background worker goes silent (e.g. the browser stopped it),
+  // don't leave "Translating…" on screen forever.
+  function armWatchdog() {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      showStatus("Lost contact with the extension while translating. Press Alt+T to try again.", {
+        error: true,
+        hideAfter: 10000,
+      });
+    }, 120_000);
+  }
+
+  function start(captureView) {
+    view = captureView;
     clearOverlays();
     layer.hidden = false;
-    for (const region of regions) {
-      const { x, y, width, height } = region.box;
-      // Box coords are fractions of the screenshot, which is the viewport.
-      // Multiplying by the viewport size in CSS pixels undoes the
-      // devicePixelRatio scaling, and adding the scroll offset at capture
-      // time turns viewport coords into document coords.
-      const left = view.scrollX + x * view.width;
-      const top = view.scrollY + y * view.height;
-      const w = Math.max(width * view.width, 36);
-      const h = Math.max(height * view.height, 20);
+    showStatus("Translating…", { spinner: true });
+    armWatchdog();
+  }
 
-      const box = document.createElement("div");
-      box.className = region.kind === "sfx" ? "box sfx" : "box";
-      box.style.left = `${left}px`;
-      box.style.top = `${top}px`;
-      box.style.width = `${w}px`;
-      box.style.height = `${h}px`;
-      box.textContent = region.english;
-      layer.append(box);
-      fitText(box);
-    }
-    const n = regions.length;
-    showStatus(n ? `Translated ${n} text region${n === 1 ? "" : "s"}.` : "No Japanese text found in view.", {
-      hideAfter: 2500,
-    });
+  function addRegion(region) {
+    if (!view) return;
+    armWatchdog();
+    const { x, y, width, height } = region.box;
+    // Box coords are fractions of the screenshot, which is the viewport.
+    // Multiplying by the viewport size in CSS pixels undoes the
+    // devicePixelRatio scaling, and adding the scroll offset at capture
+    // time turns viewport coords into document coords.
+    const left = view.scrollX + x * view.width;
+    const top = view.scrollY + y * view.height;
+    const w = Math.max(width * view.width, 36);
+    const h = Math.max(height * view.height, 20);
+
+    const box = document.createElement("div");
+    box.className = region.kind === "sfx" ? "box sfx" : "box";
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    box.style.width = `${w}px`;
+    box.style.height = `${h}px`;
+    box.textContent = region.english;
+    layer.append(box);
+    fitText(box);
+    const n = layer.childElementCount;
+    showStatus(`Translating… ${n} bubble${n === 1 ? "" : "s"} so far`, { spinner: true });
+  }
+
+  function finish({ count, seconds, note }) {
+    clearTimeout(watchdog);
+    const summary = count
+      ? `Translated ${count} text region${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s.`
+      : "No Japanese text found in view.";
+    showStatus(summary + (note ?? ""), { hideAfter: note ? 8000 : 3000 });
   }
 
   // Shrink the font until the translation fits inside its box.
@@ -178,13 +206,17 @@
           })
         );
         return true; // keep the channel open for the async response
-      case "loading":
-        showStatus("Translating…", { spinner: true });
+      case "start":
+        start(msg.view);
         break;
-      case "render":
-        render(msg.regions, msg.view);
+      case "region":
+        addRegion(msg.region);
+        break;
+      case "done":
+        finish(msg);
         break;
       case "error":
+        clearTimeout(watchdog);
         showStatus(msg.message, { error: true, hideAfter: 10000 });
         break;
       case "toggle":
