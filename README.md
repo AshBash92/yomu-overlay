@@ -24,6 +24,8 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 | --- | --- |
 | Translate what's visible | Alt+T |
 | Show / hide overlays | Alt+Shift+T |
+| Open the study panel | Alt+Shift+S |
+| Study one bubble | Ctrl+click its translation |
 
 ## Files
 
@@ -32,6 +34,9 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 | `manifest.json` | Extension config: permissions, hotkeys, pages |
 | `background.js` | Service worker: hotkeys, screenshot, sends it to Claude |
 | `claude.js` | Claude API calls, prompt, and the JSON shape of the answer |
+| `panel.html/js` | Study side panel: bubbles, word breakdowns, grammar, saved words |
+| `panel-open.js` | Opens the side panel (or a window if unsupported) |
+| `wordlist.js` | Saved word list and Anki CSV export |
 | `content.js` | Draws the translation boxes on the page |
 | `popup.html/js` | Toolbar button menu |
 | `options.html/js` | API key, model, and effort settings |
@@ -41,3 +46,13 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 
 - Background worker logs (timing for each translation, plus errors): `brave://extensions` → Yomu Overlay → click the blue **service worker** link. If it says "(inactive)", press Alt+T first.
 - Errors from the overlay: open DevTools (F12) on the manga tab → Console.
+
+## Study panel
+
+Open it with Alt+Shift+S or the toolbar popup. It lists every bubble from the last translation of the current tab. Click a bubble to load its reading and word-by-word breakdown (one small Claude request, cached until the browser restarts). Click a word for its meaning and kanji, then **Save word**. **Explain grammar** asks Claude for a short grammar note.
+
+### Importing saved words into Anki
+
+1. In the panel, open **Saved words** and click **Export CSV for Anki**.
+2. In Anki: **File → Import**, pick the CSV. The columns are named automatically.
+3. Choose a note type and deck, map the fields you want (e.g. Word to Front; Reading, Meaning, Kanji, and Sentence to Back), then **Import**.

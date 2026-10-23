@@ -3,6 +3,7 @@
 
 import { translateImage, ApiError } from "./claude.js";
 import { getSettings } from "./settings.js";
+import { openPanel } from "./panel-open.js";
 
 // Longest screenshot edge sent to Claude. Larger images cost more and
 // take longer without reading small manga text noticeably better.
@@ -11,16 +12,34 @@ const MAX_IMAGE_EDGE = 2000;
 const busyTabs = new Set();
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
+  // Must run before any await: the side panel only opens in direct
+  // response to the keypress.
+  if (command === "open-study-panel" && tab) {
+    openPanel(tab.windowId).catch((err) => console.warn("[yomu] couldn't open panel:", err));
+    return;
+  }
   tab ??= await getActiveTab();
   if (!tab) return;
   if (command === "translate-visible") translateTab(tab);
   if (command === "toggle-overlay") sendToTab(tab.id, { type: "toggle" });
 });
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "popup-translate") translateTab(msg.tab);
   if (msg.type === "popup-toggle") sendToTab(msg.tab.id, { type: "toggle" });
+  if (msg.type === "focus-region" && sender.tab) {
+    // Ctrl+click on a bubble: tell the panel which one, and open it.
+    chrome.storage.session.set({ focus: { tabId: sender.tab.id, index: msg.index, at: Date.now() } });
+    openPanel(sender.tab.windowId).then(
+      () => sendResponse({ opened: true }),
+      () => sendResponse({ opened: false })
+    );
+    return true; // async response
+  }
 });
+
+// Forget a tab's bubbles when it closes.
+chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(`tab:${tabId}`));
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -73,10 +92,20 @@ async function translateTab(tab) {
     const image = await shrinkImage(dataUrl, MAX_IMAGE_EDGE);
     const tShrink = performance.now();
 
+    // Kept in session storage so the study panel can list the bubbles.
+    const pageKey = `tab:${tab.id}`;
+    const page = { id: Date.now(), url: tab.url ?? "", translatedAt: Date.now(), regions: [] };
+    await chrome.storage.session.set({ [pageKey]: page });
+
     const { regions, stopReason, stats } = await translateImage({
       ...settings,
       image,
-      onRegion: (region) => sendToTab(tab.id, { type: "region", region }),
+      onRegion: (region) => {
+        const index = page.regions.length;
+        page.regions.push(region);
+        sendToTab(tab.id, { type: "region", region, index });
+        chrome.storage.session.set({ [pageKey]: page }).catch(() => {});
+      },
     });
 
     const totalMs = performance.now() - t0;

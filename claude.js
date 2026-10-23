@@ -1,5 +1,6 @@
-// Talks to the Claude API. Runs in the background service worker
-// (and the options page, for the key test).
+// Talks to the Claude API. Used by the background service worker
+// (page translation), the study panel (breakdowns, grammar), and the
+// options page (key test).
 
 const API_BASE = "https://api.anthropic.com/v1";
 const API_VERSION = "2026-10-21";
@@ -25,7 +26,9 @@ export class ApiError extends Error {
   }
 }
 
-const SYSTEM_PROMPT = `You translate Japanese manga for an English-speaking reader who is learning Japanese.
+// ---------- Prompts and schemas ----------
+
+const TRANSLATE_PROMPT = `You translate Japanese manga for an English-speaking reader who is learning Japanese.
 
 You receive a screenshot of the visible part of a web page. Find every region of Japanese text that is part of the manga artwork: speech bubbles, thought bubbles, narration boxes, sound effects, and signs. Ignore website UI, menus, ads, page numbers, and comments.
 
@@ -41,7 +44,7 @@ const SKIP_SFX = `
 
 The reader can already read sound effects, so skip them: leave out onomatopoeia and sound effects drawn into the artwork (ドン, ゴゴゴ, ざわざわ and the like), and never use the "sfx" kind.`;
 
-const RESULT_SCHEMA = {
+const TRANSLATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["regions"],
@@ -76,6 +79,61 @@ const RESULT_SCHEMA = {
   },
 };
 
+const BREAKDOWN_PROMPT = `You help an English speaker learn Japanese by studying lines from manga.
+
+Break the given line into words, in order. Keep particles, auxiliary verbs, and conjugation endings as separate words wherever a learner would look them up separately. For each word give:
+- word: exactly as it appears in the line
+- reading: its reading in hiragana, as said in this line
+- dictionaryForm: the form you'd look up in a dictionary (same as word if it isn't inflected)
+- meaning: a short English meaning as used here
+- partOfSpeech: e.g. "noun", "particle", "verb (て-form)", "i-adjective (past)"
+- kanji: each kanji in the word with its core meaning and its reading in this word; empty if none
+
+Also give the whole line's reading in hiragana. The English translation and nearby lines are context only; break down just the given line.`;
+
+const BREAKDOWN_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reading", "words"],
+  properties: {
+    reading: { type: "string" },
+    words: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["word", "reading", "dictionaryForm", "meaning", "partOfSpeech", "kanji"],
+        properties: {
+          word: { type: "string" },
+          reading: { type: "string" },
+          dictionaryForm: { type: "string" },
+          meaning: { type: "string" },
+          partOfSpeech: { type: "string" },
+          kanji: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["character", "meaning", "reading"],
+              properties: {
+                character: { type: "string" },
+                meaning: { type: "string" },
+                reading: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const GRAMMAR_PROMPT = `You explain the grammar of one line of manga dialogue to an intermediate learner of Japanese.
+
+Cover what the learner needs to understand the line: conjugations, particles, sentence-ending particles, casual or dialect speech, and anything left unsaid such as an omitted subject. Use 2 to 5 short bullet points. Write plain text: start each bullet with "• ", no markdown or headings, and don't repeat the full translation.`;
+
+// ---------- HTTP plumbing ----------
+
 function headers(apiKey, betas = []) {
   const h = {
     "content-type": "application/json",
@@ -88,7 +146,7 @@ function headers(apiKey, betas = []) {
   return h;
 }
 
-// fetch() with a timeout that resets whenever data arrives.
+// Aborts a request if no data arrives for IDLE_TIMEOUT_MS.
 function idleTimer(controller) {
   let timer;
   const reset = () => {
@@ -156,6 +214,119 @@ function streamError(error) {
   return new ApiError("server", `Claude API error: ${error?.message ?? type ?? "unknown"}`);
 }
 
+// Yields parsed server-sent events from a streaming response.
+async function* readEvents(res, onData) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    onData();
+    buffer += decoder.decode(value, { stream: true });
+    let split;
+    while ((split = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      const data = raw
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (data) yield JSON.parse(data);
+    }
+  }
+}
+
+/**
+ * Sends one streaming Messages request. Streaming keeps data flowing so
+ * the browser doesn't kill the request while Claude is thinking.
+ * Calls onText with each chunk of answer text. Resolves with
+ * { text, stopReason, stats }.
+ */
+async function streamMessage({ apiKey, model, effort, system, content, schema, maxTokens = 16000, onText }) {
+  const useFallback = FALLBACK_MODELS.has(model);
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    stream: true,
+    system,
+    messages: [{ role: "user", content }],
+    output_config: { effort },
+  };
+  if (schema) body.output_config.format = { type: "json_schema", schema };
+  if (useFallback) body.fallbacks = "default";
+
+  const started = performance.now();
+  const stats = { model, inputTokens: 0, outputTokens: 0, firstByteMs: 0, totalMs: 0 };
+  const controller = new AbortController();
+  const timer = idleTimer(controller);
+  let text = "";
+  let stopReason = null;
+
+  try {
+    const res = await send(
+      "/messages",
+      {
+        method: "POST",
+        headers: headers(apiKey, useFallback ? ["server-side-fallback-2026-07-01"] : []),
+        body: JSON.stringify(body),
+      },
+      controller
+    );
+    if (!res.ok) throw await toApiError(res);
+    stats.firstByteMs = performance.now() - started;
+
+    for await (const event of readEvents(res, timer.reset)) {
+      switch (event.type) {
+        case "message_start":
+          stats.model = event.message?.model ?? model;
+          stats.inputTokens = event.message?.usage?.input_tokens ?? 0;
+          break;
+        case "content_block_start":
+          if (event.content_block?.type === "fallback") {
+            console.info("Yomu: Claude handed this request to a fallback model", event.content_block);
+          }
+          break;
+        case "content_block_delta":
+          if (event.delta?.type === "text_delta") {
+            text += event.delta.text;
+            onText?.(event.delta.text);
+          }
+          break;
+        case "message_delta":
+          stopReason = event.delta?.stop_reason ?? stopReason;
+          stats.outputTokens = event.usage?.output_tokens ?? stats.outputTokens;
+          break;
+        case "error":
+          throw streamError(event.error);
+      }
+    }
+  } catch (err) {
+    throw networkError(err);
+  } finally {
+    timer.stop();
+  }
+
+  stats.totalMs = performance.now() - started;
+  return { text, stopReason, stats };
+}
+
+function checkFinished(stopReason, what) {
+  if (stopReason === "refusal") throw new ApiError("refusal", `Claude declined to ${what}.`);
+  if (stopReason === "max_tokens") throw new ApiError("truncated", `Claude's answer was cut off while trying to ${what}. Try again.`);
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError("parse", "Claude's answer wasn't valid JSON. Try again.");
+  }
+}
+
+// ---------- Page translation ----------
+
 // Pulls each finished region object out of the partial JSON text
 // {"regions":[{...},{...}, ...  as it streams in.
 class RegionExtractor {
@@ -203,130 +374,81 @@ class RegionExtractor {
   }
 }
 
-// Yields parsed server-sent events from a streaming response.
-async function* readEvents(res, onData) {
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    onData();
-    buffer += decoder.decode(value, { stream: true });
-    let split;
-    while ((split = buffer.indexOf("\n\n")) !== -1) {
-      const raw = buffer.slice(0, split);
-      buffer = buffer.slice(split + 2);
-      const data = raw
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (data) yield JSON.parse(data);
-    }
-  }
-}
-
 /**
  * Streams one screenshot through Claude. Calls onRegion for each text
- * region as soon as it's complete. Resolves with { regions, stats }.
+ * region as soon as it's complete. Resolves with { regions, stopReason, stats }.
  * image: { mediaType, data } where data is base64 without the data: prefix.
  */
 export async function translateImage({ apiKey, model, effort, showSfx, image, onRegion }) {
-  const useFallback = FALLBACK_MODELS.has(model);
-  const body = {
-    model,
-    max_tokens: 16000,
-    stream: true,
-    system: showSfx ? SYSTEM_PROMPT : SYSTEM_PROMPT + SKIP_SFX,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: image.mediaType, data: image.data },
-          },
-          { type: "text", text: "Translate the manga text in this screenshot." },
-        ],
-      },
-    ],
-    output_config: {
-      effort,
-      format: { type: "json_schema", schema: RESULT_SCHEMA },
-    },
-  };
-  if (useFallback) body.fallbacks = "default";
-
   const started = performance.now();
-  const stats = { model, inputTokens: 0, outputTokens: 0, firstByteMs: 0, firstRegionMs: 0, totalMs: 0 };
+  let firstRegionMs = 0;
   const regions = [];
   const extractor = new RegionExtractor((region) => {
     if (!region?.box || typeof region.english !== "string") return;
     // Backstop in case Claude includes a sound effect anyway.
     if (!showSfx && region.kind === "sfx") return;
-    if (!regions.length) stats.firstRegionMs = performance.now() - started;
+    if (!regions.length) firstRegionMs = performance.now() - started;
     regions.push(region);
     onRegion?.(region);
   });
 
-  const controller = new AbortController();
-  const timer = idleTimer(controller);
-  let stopReason = null;
+  const { stopReason, stats } = await streamMessage({
+    apiKey,
+    model,
+    effort,
+    system: showSfx ? TRANSLATE_PROMPT : TRANSLATE_PROMPT + SKIP_SFX,
+    content: [
+      { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
+      { type: "text", text: "Translate the manga text in this screenshot." },
+    ],
+    schema: TRANSLATE_SCHEMA,
+    onText: (chunk) => extractor.push(chunk),
+  });
+  stats.firstRegionMs = firstRegionMs;
 
-  try {
-    const res = await send(
-      "/messages",
-      {
-        method: "POST",
-        headers: headers(apiKey, useFallback ? ["server-side-fallback-2026-07-01"] : []),
-        body: JSON.stringify(body),
-      },
-      controller
-    );
-    if (!res.ok) throw await toApiError(res);
-    stats.firstByteMs = performance.now() - started;
-
-    for await (const event of readEvents(res, timer.reset)) {
-      switch (event.type) {
-        case "message_start":
-          stats.model = event.message?.model ?? model;
-          stats.inputTokens = event.message?.usage?.input_tokens ?? 0;
-          break;
-        case "content_block_start":
-          if (event.content_block?.type === "fallback") {
-            console.info("Yomu: Claude handed this page to a fallback model", event.content_block);
-          }
-          break;
-        case "content_block_delta":
-          if (event.delta?.type === "text_delta") extractor.push(event.delta.text);
-          break;
-        case "message_delta":
-          stopReason = event.delta?.stop_reason ?? stopReason;
-          stats.outputTokens = event.usage?.output_tokens ?? stats.outputTokens;
-          break;
-        case "error":
-          throw streamError(event.error);
-      }
-    }
-  } catch (err) {
-    throw networkError(err);
-  } finally {
-    timer.stop();
-  }
-
-  stats.totalMs = performance.now() - started;
-
-  if (stopReason === "refusal" && !regions.length) {
-    throw new ApiError("refusal", "Claude declined to translate this page.");
-  }
-  if (stopReason === "max_tokens" && !regions.length) {
-    throw new ApiError("truncated", "This view has too much text to translate at once. Zoom in so less is on screen, then try again.");
-  }
-  if (!extractor.inArray && !regions.length) {
-    throw new ApiError("empty", "Claude returned no translation. Try again.");
+  if (!regions.length) {
+    checkFinished(stopReason, "translate this page");
+    if (!extractor.inArray) throw new ApiError("empty", "Claude returned no translation. Try again.");
   }
   return { regions, stopReason, stats };
+}
+
+// ---------- Study helpers ----------
+
+function lineContext({ line, english, nearby }) {
+  let text = `Line: ${line}\nEnglish translation: ${english}`;
+  if (nearby?.length) text += `\nNearby lines on the same page:\n${nearby.map((l) => `- ${l}`).join("\n")}`;
+  return text;
+}
+
+/** Word-by-word breakdown of one line. Resolves with { reading, words }. */
+export async function breakdownLine({ apiKey, model, effort, line, english, nearby }) {
+  const { text, stopReason } = await streamMessage({
+    apiKey,
+    model,
+    effort,
+    system: BREAKDOWN_PROMPT,
+    content: [{ type: "text", text: lineContext({ line, english, nearby }) }],
+    schema: BREAKDOWN_SCHEMA,
+    maxTokens: 8000,
+  });
+  checkFinished(stopReason, "break down this line");
+  return parseJson(text);
+}
+
+/** Short plain-text grammar explanation of one line. */
+export async function explainGrammar({ apiKey, model, effort, line, english, nearby }) {
+  const { text, stopReason } = await streamMessage({
+    apiKey,
+    model,
+    effort,
+    system: GRAMMAR_PROMPT,
+    content: [{ type: "text", text: lineContext({ line, english, nearby }) }],
+    maxTokens: 4000,
+  });
+  checkFinished(stopReason, "explain this line");
+  if (!text.trim()) throw new ApiError("empty", "Claude returned no explanation. Try again.");
+  return text.trim();
 }
 
 /** Checks a key without spending tokens. */

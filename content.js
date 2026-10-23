@@ -35,6 +35,9 @@
       }
       .box.sfx { background: rgba(255, 244, 200, 0.92); font-style: italic; }
       .layer.hide-sfx .box.sfx { display: none; }
+      /* While Ctrl is held, boxes become clickable to open them in the study panel. */
+      .layer.interactive .box { pointer-events: auto; cursor: pointer; }
+      .layer.interactive .box:hover, .box.highlight { box-shadow: 0 0 0 3px #d84315; }
       .status {
         position: fixed;
         right: 16px;
@@ -117,7 +120,7 @@
     armWatchdog();
   }
 
-  function addRegion(region) {
+  function addRegion(region, index) {
     if (!view) return;
     armWatchdog();
     const { x, y, width, height } = region.box;
@@ -132,6 +135,7 @@
 
     const box = document.createElement("div");
     box.className = region.kind === "sfx" ? "box sfx" : "box";
+    box.dataset.index = index;
     box.style.left = `${left}px`;
     box.style.top = `${top}px`;
     box.style.width = `${w}px`;
@@ -178,6 +182,36 @@
     { capture: true, passive: true }
   );
 
+  // Ctrl+click a box to study it in the side panel. Boxes only take clicks
+  // while Ctrl is held, so normal clicks still reach the page.
+  const setInteractive = (on) => layer.classList.toggle("interactive", on && layer.childElementCount > 0);
+  addEventListener("keydown", (e) => e.key === "Control" && setInteractive(true), true);
+  addEventListener("keyup", (e) => e.key === "Control" && setInteractive(false), true);
+  addEventListener("blur", () => setInteractive(false));
+
+  layer.addEventListener("click", (e) => {
+    const box = e.target.closest(".box");
+    if (!box) return;
+    e.preventDefault();
+    e.stopPropagation();
+    highlight(Number(box.dataset.index));
+    chrome.runtime
+      .sendMessage({ type: "focus-region", index: Number(box.dataset.index) })
+      .then((res) => {
+        if (!res?.opened) showStatus("Press Alt+Shift+S to open the study panel.", { hideAfter: 4000 });
+      })
+      .catch(() => showStatus("The extension was reloaded. Refresh this page.", { error: true, hideAfter: 5000 }));
+  });
+
+  function highlight(index) {
+    for (const box of layer.querySelectorAll(".box.highlight")) box.classList.remove("highlight");
+    const box = layer.querySelector(`.box[data-index="${index}"]`);
+    if (!box) return;
+    box.classList.add("highlight");
+    const r = box.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight) box.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
   // A resize changes layout, so old positions are wrong.
   addEventListener("resize", () => clearOverlays(), { passive: true });
 
@@ -212,7 +246,10 @@
         start(msg.view);
         break;
       case "region":
-        addRegion(msg.region);
+        addRegion(msg.region, msg.index);
+        break;
+      case "highlight":
+        highlight(msg.index);
         break;
       case "done":
         finish(msg);

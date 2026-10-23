@@ -1,4 +1,5 @@
 import { getSettings, saveSettings } from "./settings.js";
+import { openPanel } from "./panel-open.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -17,6 +18,16 @@ $("toggle").addEventListener("click", async () => {
   window.close();
 });
 
+// Looked up now so the click handler can open the panel without waiting
+// (the side panel only opens in direct response to a click).
+let windowId = null;
+chrome.windows.getCurrent().then((w) => (windowId = w.id));
+
+$("study").addEventListener("click", async () => {
+  await openPanel(windowId).catch((err) => console.warn("Yomu: couldn't open panel", err));
+  window.close();
+});
+
 $("options").addEventListener("click", () => chrome.runtime.openOptionsPage());
 $("shortcuts").addEventListener("click", () => chrome.tabs.create({ url: "chrome://extensions/shortcuts" }));
 
@@ -25,6 +36,7 @@ for (const c of commands) {
   const label = c.shortcut || "not set";
   if (c.name === "translate-visible") $("translate-key").textContent = label;
   if (c.name === "toggle-overlay") $("toggle-key").textContent = label;
+  if (c.name === "open-study-panel") $("study-key").textContent = label;
 }
 
 const { apiKey, showSfx } = await getSettings();

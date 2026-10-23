@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yomu study panel</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f5f4f2;
+      --surface-2: #ebe9e5;
+      --text: #1f1f1f;
+      --muted: #666;
+      --accent: #d84315;
+      --accent-text: #fff;
+      --border: #dddad5;
+      --error: #b71c1c;
+      --ja: "Yu Gothic UI", "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1b1a;
+        --surface: #262523;
+        --surface-2: #32302d;
+        --text: #eeeae4;
+        --muted: #a39e96;
+        --accent: #ff7043;
+        --accent-text: #1c1b1a;
+        --border: #3a3835;
+        --error: #ff8a80;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+    [hidden] { display: none !important; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+
+    nav { position: sticky; top: 0; z-index: 1; display: flex; gap: 4px; padding: 10px 12px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
+    nav button { border: 0; background: none; padding: 8px 10px; border-bottom: 2px solid transparent; color: var(--muted); }
+    nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+    main { padding: 12px; }
+    .empty { color: var(--muted); padding: 24px 8px; text-align: center; }
+    .meta { color: var(--muted); font-size: 12px; margin: 0 2px 10px; }
+
+    .bubble { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: var(--surface); overflow: hidden; }
+    .bubble.open { border-color: var(--accent); }
+    .bubble > header { display: flex; gap: 10px; padding: 10px 12px; cursor: pointer; }
+    .num { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-2); font-size: 12px; display: grid; place-items: center; margin-top: 2px; }
+    .ja { font-family: var(--ja); font-size: 18px; line-height: 1.5; margin: 0; }
+    .en { color: var(--muted); margin: 2px 0 0; }
+
+    .detail { padding: 0 12px 12px 44px; }
+    .reading { font-family: var(--ja); color: var(--muted); margin: 0 0 8px; }
+    .words { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .chip { display: flex; flex-direction: column; align-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 3px 8px; }
+    .chip .r { font-family: var(--ja); font-size: 10px; color: var(--muted); line-height: 1.2; }
+    .chip .w { font-family: var(--ja); font-size: 17px; line-height: 1.3; }
+    .chip.selected { border-color: var(--accent); background: var(--surface-2); }
+
+    .word-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 10px 12px; margin-bottom: 10px; }
+    .word-card .top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+    .word-card .big { font-family: var(--ja); font-size: 24px; line-height: 1.2; }
+    .word-card .sub { font-family: var(--ja); color: var(--muted); }
+    .word-card .pos { font-size: 12px; color: var(--muted); }
+    .word-card ul { list-style: none; padding: 0; margin: 8px 0 0; border-top: 1px solid var(--border); }
+    .word-card li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0 0; }
+    .word-card li .k { font-family: var(--ja); font-size: 22px; }
+
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn { border: 1px solid var(--border); background: var(--bg); border-radius: 6px; padding: 5px 10px; font-size: 13px; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+    .btn.saved { border-color: var(--accent); color: var(--accent); }
+
+    .grammar { white-space: pre-wrap; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
+    .loading { color: var(--muted); font-style: italic; }
+    .error { color: var(--error); }
+
+    .toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .toolbar .spacer { flex: 1; }
+    .saved-word { display: flex; gap: 10px; align-items: start; padding: 10px 2px; border-bottom: 1px solid var(--border); }
+    .saved-word .info { flex: 1; min-width: 0; }
+    .saved-word .ws { font-family: var(--ja); font-size: 18px; }
+    .saved-word .wr { font-family: var(--ja); color: var(--muted); margin-left: 6px; }
+    .saved-word .ctx { font-family: var(--ja); font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .x { border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; padding: 2px 6px; }
+    .confirm { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <nav role="tablist">
+    <button id="tab-page" role="tab" aria-selected="true">This page</button>
+    <button id="tab-words" role="tab" aria-selected="false">Saved words (<span id="word-count">0</span>)</button>
+  </nav>
+
+  <main id="view-page">
+    <p id="page-meta" class="meta" hidden></p>
+    <div id="bubbles"></div>
+    <p id="page-empty" class="empty">Press <b>Alt+T</b> on a manga page to translate it. Its bubbles show up here for study.<br><br><b>Ctrl+click</b> a translation on the page to jump to it.</p>
+  </main>
+
+  <main id="view-words" hidden>
+    <div class="toolbar">
+      <button id="export" class="btn primary">Export CSV for Anki</button>
+      <span class="spacer"></span>
+      <button id="clear" class="btn">Clear all</button>
+      <span id="clear-confirm" class="confirm" hidden>
+        Delete every saved word?
+        <button id="clear-yes" class="btn primary">Delete</button>
+        <button id="clear-no" class="btn">Cancel</button>
+      </span>
+    </div>
+    <div id="word-list"></div>
+    <p id="words-empty" class="empty">No saved words yet. Open a bubble, click a word, then click <b>Save word</b>.</p>
+  </main>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
