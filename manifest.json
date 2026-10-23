@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Yomu Overlay",
+  "version": "0.1.0",
+  "description": "Translate Japanese manga on screen into English with Claude, and learn kanji as you read.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://api.anthropic.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Yomu Overlay",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "translate-visible": {
+      "suggested_key": { "default": "Alt+T" },
+      "description": "Translate what's visible in this tab"
+    },
+    "toggle-overlay": {
+      "suggested_key": { "default": "Alt+Shift+T" },
+      "description": "Show or hide the translation overlays"
+    }
+  }
+}

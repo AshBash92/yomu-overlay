@@ -17,3 +17,27 @@ Plain JavaScript, no build step. You supply your own Anthropic API key; it is st
 After changing code, click the reload icon on the extension card in `brave://extensions`, then refresh the manga tab.
 
 To change the hotkey, go to `brave://extensions/shortcuts`.
+
+## Hotkeys
+
+| Action | Default |
+| --- | --- |
+| Translate what's visible | Alt+T |
+| Show / hide overlays | Alt+Shift+T |
+
+## Files
+
+| File | What it does |
+| --- | --- |
+| `manifest.json` | Extension config: permissions, hotkeys, pages |
+| `background.js` | Service worker: hotkeys, screenshot, sends it to Claude |
+| `claude.js` | Claude API calls, prompt, and the JSON shape of the answer |
+| `content.js` | Draws the translation boxes on the page |
+| `popup.html/js` | Toolbar button menu |
+| `options.html/js` | API key, model, and effort settings |
+| `settings.js` | Shared storage helpers |
+
+## Debugging
+
+- Errors from the background worker: `brave://extensions` → Yomu Overlay → **Inspect views: service worker** → Console.
+- Errors from the overlay: open DevTools (F12) on the manga tab → Console.
