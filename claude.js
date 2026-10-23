@@ -37,6 +37,10 @@ For each region:
 
 List regions in Japanese reading order: panels right to left, top to bottom. Skip text cut off so badly at the screenshot edge that it can't be read. If there is no Japanese manga text, return an empty list.`;
 
+const SKIP_SFX = `
+
+The reader can already read sound effects, so skip them: leave out onomatopoeia and sound effects drawn into the artwork (ドン, ゴゴゴ, ざわざわ and the like), and never use the "sfx" kind.`;
+
 const RESULT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -228,13 +232,13 @@ async function* readEvents(res, onData) {
  * region as soon as it's complete. Resolves with { regions, stats }.
  * image: { mediaType, data } where data is base64 without the data: prefix.
  */
-export async function translateImage({ apiKey, model, effort, image, onRegion }) {
+export async function translateImage({ apiKey, model, effort, showSfx, image, onRegion }) {
   const useFallback = FALLBACK_MODELS.has(model);
   const body = {
     model,
     max_tokens: 16000,
     stream: true,
-    system: SYSTEM_PROMPT,
+    system: showSfx ? SYSTEM_PROMPT : SYSTEM_PROMPT + SKIP_SFX,
     messages: [
       {
         role: "user",
@@ -259,6 +263,8 @@ export async function translateImage({ apiKey, model, effort, image, onRegion })
   const regions = [];
   const extractor = new RegionExtractor((region) => {
     if (!region?.box || typeof region.english !== "string") return;
+    // Backstop in case Claude includes a sound effect anyway.
+    if (!showSfx && region.kind === "sfx") return;
     if (!regions.length) stats.firstRegionMs = performance.now() - started;
     regions.push(region);
     onRegion?.(region);

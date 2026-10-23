@@ -1,4 +1,4 @@
-import { getSettings } from "./settings.js";
+import { getSettings, saveSettings } from "./settings.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,6 +27,16 @@ for (const c of commands) {
   if (c.name === "toggle-overlay") $("toggle-key").textContent = label;
 }
 
-const { apiKey } = await getSettings();
+const { apiKey, showSfx } = await getSettings();
+
+$("showSfx").checked = showSfx;
+$("showSfx").addEventListener("change", async (e) => {
+  const show = e.target.checked;
+  await saveSettings({ showSfx: show });
+  // Hide or show sound-effect boxes already on the page.
+  const tab = await activeTab();
+  if (tab) chrome.tabs.sendMessage(tab.id, { type: "set-sfx", show }).catch(() => {});
+});
+
 $("key").textContent = apiKey ? "API key saved." : "No API key yet. Add one in Options.";
 $("key").classList.toggle("missing", !apiKey);

@@ -34,6 +34,7 @@
         pointer-events: none; /* clicks pass through to the page */
       }
       .box.sfx { background: rgba(255, 244, 200, 0.92); font-style: italic; }
+      .layer.hide-sfx .box.sfx { display: none; }
       .status {
         position: fixed;
         right: 16px;
@@ -207,6 +208,7 @@
         );
         return true; // keep the channel open for the async response
       case "start":
+        layer.classList.toggle("hide-sfx", !msg.showSfx);
         start(msg.view);
         break;
       case "region":
@@ -218,6 +220,9 @@
       case "error":
         clearTimeout(watchdog);
         showStatus(msg.message, { error: true, hideAfter: 10000 });
+        break;
+      case "set-sfx":
+        layer.classList.toggle("hide-sfx", !msg.show);
         break;
       case "toggle":
         if (!layer.childElementCount) {

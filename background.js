@@ -68,7 +68,7 @@ async function translateTab(tab) {
     const view = await chrome.tabs.sendMessage(tab.id, { type: "prepare-capture" });
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 90 });
     const tCapture = performance.now();
-    await sendToTab(tab.id, { type: "start", view });
+    await sendToTab(tab.id, { type: "start", view, showSfx: settings.showSfx });
 
     const image = await shrinkImage(dataUrl, MAX_IMAGE_EDGE);
     const tShrink = performance.now();

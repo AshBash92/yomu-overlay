@@ -11,6 +11,7 @@
     kbd { font: 11px ui-monospace, monospace; padding: 1px 4px; border: 1px solid #bbb; border-radius: 3px; }
     .key { margin: 4px 0 10px; font-size: 12px; }
     .key.missing { color: #b71c1c; }
+    .switch { display: flex; align-items: center; gap: 6px; margin: 2px 0 12px; cursor: pointer; }
     .links { display: flex; justify-content: space-between; font-size: 12px; }
     a { color: #1565c0; cursor: pointer; text-decoration: none; }
   </style>
@@ -20,6 +21,7 @@
   <div id="key" class="key"></div>
   <button id="translate" class="primary">Translate view <kbd id="translate-key"></kbd></button>
   <button id="toggle">Show / hide overlays <kbd id="toggle-key"></kbd></button>
+  <label class="switch"><input id="showSfx" type="checkbox"> Translate sound effects</label>
   <div class="links">
     <a id="options">Options</a>
     <a id="shortcuts">Change hotkeys</a>
