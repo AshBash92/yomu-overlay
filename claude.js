@@ -46,6 +46,34 @@ const SKIP_SFX = `
 
 The reader can already read sound effects, so skip them: leave out onomatopoeia and sound effects drawn into the artwork (ドン, ゴゴゴ, ざわざわ and the like), and never use the "sfx" kind.`;
 
+const READINGS = `
+
+Also give segments for each region: the japanese text split into words, in order, so that joining every segment's text reproduces the japanese text exactly (punctuation included). For a segment containing kanji, give its reading in hiragana as read in this line, and its dictionary form. For other segments, leave reading and dictionaryForm empty.`;
+
+const SEGMENTS_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["text", "reading", "dictionaryForm"],
+    properties: {
+      text: { type: "string" },
+      reading: { type: "string" },
+      dictionaryForm: { type: "string" },
+    },
+  },
+};
+
+// Same as TRANSLATE_SCHEMA, plus per-word readings for furigana.
+function translateSchema(withReadings) {
+  if (!withReadings) return TRANSLATE_SCHEMA;
+  const schema = structuredClone(TRANSLATE_SCHEMA);
+  const region = schema.properties.regions.items;
+  region.properties.segments = SEGMENTS_SCHEMA;
+  region.required.push("segments");
+  return schema;
+}
+
 const TRANSLATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -383,7 +411,7 @@ class RegionExtractor {
  * region as soon as it's complete. Resolves with { regions, stopReason, stats }.
  * image: { mediaType, data } where data is base64 without the data: prefix.
  */
-export async function translateImage({ apiKey, model, effort, showSfx, image, onRegion }) {
+export async function translateImage({ apiKey, model, effort, showSfx, withReadings, image, onRegion }) {
   const started = performance.now();
   let firstRegionMs = 0;
   const regions = [];
@@ -400,12 +428,12 @@ export async function translateImage({ apiKey, model, effort, showSfx, image, on
     apiKey,
     model,
     effort,
-    system: showSfx ? TRANSLATE_PROMPT : TRANSLATE_PROMPT + SKIP_SFX,
+    system: TRANSLATE_PROMPT + (showSfx ? "" : SKIP_SFX) + (withReadings ? READINGS : ""),
     content: [
       { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
       { type: "text", text: "Translate the manga text in this screenshot." },
     ],
-    schema: TRANSLATE_SCHEMA,
+    schema: translateSchema(withReadings),
     onText: (chunk) => extractor.push(chunk),
   });
   stats.firstRegionMs = firstRegionMs;

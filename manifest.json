@@ -29,6 +29,10 @@
       "suggested_key": { "default": "Alt+Shift+T" },
       "description": "Show or hide the translation overlays"
     },
+    "reveal-english": {
+      "suggested_key": { "default": "Alt+Shift+E" },
+      "description": "Show or hide English for every bubble (read-first and hover modes)"
+    },
     "open-study-panel": {
       "suggested_key": { "default": "Alt+Shift+S" },
       "description": "Open the study panel"

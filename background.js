@@ -5,6 +5,8 @@ import { translateImage, ApiError } from "./claude.js";
 import { getSettings } from "./settings.js";
 import { openPanel } from "./panel-open.js";
 import { formatCost } from "./usage.js";
+import { getKnown, isKnown, kanjiInKnownWords } from "./known.js";
+import { kanjiUpTo, isKanji } from "./jlpt.js";
 
 // Longest screenshot edge sent to Claude. Larger images cost more and
 // take longer without reading small manga text noticeably better.
@@ -23,7 +25,31 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
   if (!tab) return;
   if (command === "translate-visible") translateTab(tab);
   if (command === "toggle-overlay") sendToTab(tab.id, { type: "toggle" });
+  if (command === "reveal-english") sendToTab(tab.id, { type: "reveal" });
 });
+
+// Tags each word so the page can decide where furigana goes:
+// hasKanji, aboveLevel (has a kanji you don't know yet), known (word
+// is in your known list).
+export async function furiganaTagger(level) {
+  const known = await getKnown();
+  const knownKanji = new Set([...kanjiUpTo(level), ...kanjiInKnownWords(known)]);
+  return (region) => {
+    if (!Array.isArray(region.segments)) return region;
+    region.segments = region.segments.map((s) => {
+      const kanji = [...(s.text ?? "")].filter(isKanji);
+      return {
+        text: s.text ?? "",
+        reading: kanji.length ? s.reading ?? "" : "",
+        dictionaryForm: s.dictionaryForm ?? "",
+        hasKanji: kanji.length > 0,
+        aboveLevel: kanji.some((k) => !knownKanji.has(k)),
+        known: isKnown(known, { word: s.text, dictionaryForm: s.dictionaryForm }),
+      };
+    });
+    return region;
+  };
+}
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "popup-translate") translateTab(msg.tab);
@@ -88,7 +114,15 @@ async function translateTab(tab) {
     const view = await chrome.tabs.sendMessage(tab.id, { type: "prepare-capture" });
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 90 });
     const tCapture = performance.now();
-    await sendToTab(tab.id, { type: "start", view, showSfx: settings.showSfx });
+    await sendToTab(tab.id, {
+      type: "start",
+      view,
+      showSfx: settings.showSfx,
+      display: { mode: settings.displayMode, furigana: settings.furigana },
+    });
+    // Readings cost extra output, so only ask for them when Japanese is shown.
+    const withReadings = settings.displayMode !== "english";
+    const tag = await furiganaTagger(settings.level);
 
     const image = await shrinkImage(dataUrl, MAX_IMAGE_EDGE);
     const tShrink = performance.now();
@@ -100,8 +134,10 @@ async function translateTab(tab) {
 
     const { regions, stopReason, stats } = await translateImage({
       ...settings,
+      withReadings,
       image,
       onRegion: (region) => {
+        tag(region);
         const index = page.regions.length;
         page.regions.push(region);
         sendToTab(tab.id, { type: "region", region, index });

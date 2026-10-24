@@ -24,6 +24,7 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 | --- | --- |
 | Translate what's visible | Alt+T |
 | Show / hide overlays | Alt+Shift+T |
+| Reveal English for every bubble (read-first / hover modes) | Alt+Shift+E |
 | Open the study panel | Alt+Shift+S |
 | Study one bubble | Ctrl+click its translation |
 
@@ -65,3 +66,13 @@ Open it with Alt+Shift+S or the toolbar popup. It lists every bubble from the la
 Set your JLPT level on the options page. Grammar notes and word breakdowns are pitched at that level, and kanji from the bundled N5/N4 lists (approximate, from common study lists) count as known.
 
 In the study panel, words have two states besides new: **Learning** (saved; exported to Anki) and **Known**. Mark a word with **I know this**, or a whole bubble with **I knew every word**. Known words are stored by dictionary form, so every conjugation counts. The **Known** tab can import words you already know: paste one per line, or choose an Anki "Notes in Plain Text" export.
+
+## Display modes
+
+Pick one in the toolbar popup:
+
+- **English**: English covers each bubble.
+- **Read first**: Japanese covers each bubble, with furigana only where you need it. Hover a bubble to see its English.
+- **Original page, hover for help**: the page is untouched apart from a faint outline per bubble. Hover one for a card with the furigana and English.
+
+Furigana follows your level and known words: **Kanji above my level** (default), **Every word I haven't marked known**, or **Off**. The Japanese modes ask Claude for word readings, which adds a little to each translation; English mode doesn't. Hovering never blocks clicks on the page.

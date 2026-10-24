@@ -7,6 +7,8 @@ export const DEFAULTS = {
   effort: "medium",
   showSfx: false, // translate sound effects / onomatopoeia
   level: "N4", // learner's JLPT level
+  displayMode: "english", // "english" | "read-first" | "hover"
+  furigana: "above-level", // "above-level" | "unknown-words" | "off"
 };
 
 export async function getSettings() {

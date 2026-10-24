@@ -11,6 +11,13 @@
     kbd { font: 11px ui-monospace, monospace; padding: 1px 4px; border: 1px solid #bbb; border-radius: 3px; }
     .key { margin: 4px 0 10px; font-size: 12px; }
     .key.missing { color: #b71c1c; }
+    [hidden] { display: none !important; }
+    .modes { border: 1px solid #ddd; border-radius: 6px; margin: 4px 0 8px; padding: 6px 10px 8px; }
+    .modes legend { font-size: 12px; color: #555; padding: 0 4px; }
+    .modes label { display: flex; gap: 6px; align-items: start; margin: 3px 0; cursor: pointer; }
+    .field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    .field select { font: inherit; padding: 2px; max-width: 170px; }
+    .hint { font-size: 12px; color: #555; margin-bottom: 10px; }
     .switch { display: flex; align-items: center; gap: 6px; margin: 2px 0 12px; cursor: pointer; }
     .links { display: flex; justify-content: space-between; font-size: 12px; }
     a { color: #1565c0; cursor: pointer; text-decoration: none; }
@@ -23,6 +30,20 @@
   <button id="translate" class="primary">Translate view <kbd id="translate-key"></kbd></button>
   <button id="toggle">Show / hide overlays <kbd id="toggle-key"></kbd></button>
   <button id="study">Open study panel <kbd id="study-key"></kbd></button>
+  <fieldset class="modes">
+    <legend>Show bubbles as</legend>
+    <label><input type="radio" name="mode" value="english"> English</label>
+    <label><input type="radio" name="mode" value="read-first"> Read first: Japanese, hover for English</label>
+    <label><input type="radio" name="mode" value="hover"> Original page, hover for help</label>
+  </fieldset>
+  <label class="field" id="furigana-row">Furigana
+    <select id="furigana">
+      <option value="above-level">Kanji above my level</option>
+      <option value="unknown-words">Every word I haven't marked known</option>
+      <option value="off">Off</option>
+    </select>
+  </label>
+  <div class="hint" id="reveal-hint">Reveal all English: <kbd id="reveal-key"></kbd></div>
   <label class="switch"><input id="showSfx" type="checkbox"> Translate sound effects</label>
   <div class="links">
     <a id="options">Options</a>
