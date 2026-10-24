@@ -3,7 +3,7 @@
 
 export const DEFAULTS = {
   apiKey: "",
-  model: "claude-opus-5-5",
+  model: "claude-haiku-5-5",
   effort: "medium",
   showSfx: false, // translate sound effects / onomatopoeia
 };

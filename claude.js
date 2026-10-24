@@ -2,6 +2,8 @@
 // (page translation), the study panel (breakdowns, grammar), and the
 // options page (key test).
 
+import { estimateCost, recordUsage } from "./usage.js";
+
 const API_BASE = "https://api.anthropic.com/v1";
 const API_VERSION = "2026-10-21";
 
@@ -309,6 +311,8 @@ async function streamMessage({ apiKey, model, effort, system, content, schema, m
   }
 
   stats.totalMs = performance.now() - started;
+  stats.cost = estimateCost(stats.model, stats.inputTokens, stats.outputTokens);
+  recordUsage(stats.cost).catch(() => {});
   return { text, stopReason, stats };
 }
 

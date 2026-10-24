@@ -1,5 +1,6 @@
 import { getSettings, saveSettings } from "./settings.js";
 import { openPanel } from "./panel-open.js";
+import { getSpend, formatCost } from "./usage.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,7 +40,13 @@ for (const c of commands) {
   if (c.name === "open-study-panel") $("study-key").textContent = label;
 }
 
-const { apiKey, showSfx } = await getSettings();
+const { apiKey, showSfx, model } = await getSettings();
+
+const spend = await getSpend();
+const modelName = model.replace("claude-", "").replace(/-(\d)-(\d)$/, " $1.$2");
+$("spend").textContent =
+  `Using ${modelName}. This month: about ${formatCost(spend.total)} ` +
+  `(${spend.requests} request${spend.requests === 1 ? "" : "s"}).`;
 
 $("showSfx").checked = showSfx;
 $("showSfx").addEventListener("change", async (e) => {

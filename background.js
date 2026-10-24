@@ -4,6 +4,7 @@
 import { translateImage, ApiError } from "./claude.js";
 import { getSettings } from "./settings.js";
 import { openPanel } from "./panel-open.js";
+import { formatCost } from "./usage.js";
 
 // Longest screenshot edge sent to Claude. Larger images cost more and
 // take longer without reading small manga text noticeably better.
@@ -113,11 +114,17 @@ async function translateTab(tab) {
       `[yomu] ${regions.length} regions in ${ms(totalMs)} | ` +
         `capture ${ms(tCapture - t0)}, resize ${ms(tShrink - tCapture)} (${image.width}x${image.height}), ` +
         `Claude first byte ${ms(stats.firstByteMs)}, first bubble ${ms(stats.firstRegionMs)}, done ${ms(stats.totalMs)} | ` +
-        `${stats.model}, effort ${settings.effort}, ${stats.inputTokens} in / ${stats.outputTokens} out tokens, stop: ${stopReason}`
+        `${stats.model}, effort ${settings.effort}, ${stats.inputTokens} in / ${stats.outputTokens} out tokens, ~${formatCost(stats.cost)}, stop: ${stopReason}`
     );
 
     const note = stopReason === "max_tokens" ? " Some text was cut off; zoom in and try again." : "";
-    await sendToTab(tab.id, { type: "done", count: regions.length, seconds: totalMs / 1000, note });
+    await sendToTab(tab.id, {
+      type: "done",
+      count: regions.length,
+      seconds: totalMs / 1000,
+      cost: stats.cost == null ? "" : formatCost(stats.cost),
+      note,
+    });
     setBadge(tab.id, "");
   } catch (err) {
     console.error("[yomu] translate failed:", err);

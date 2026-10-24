@@ -112,9 +112,27 @@
     }, 120_000);
   }
 
+  // Translations from earlier views stay on the page so scrolling back
+  // doesn't cost a new request. Only boxes under the view being
+  // re-translated are replaced.
+  const MAX_BOXES = 400;
+
   function start(captureView) {
     view = captureView;
-    clearOverlays();
+    for (const box of [...layer.children]) {
+      const cx = parseFloat(box.style.left) + parseFloat(box.style.width) / 2;
+      const cy = parseFloat(box.style.top) + parseFloat(box.style.height) / 2;
+      const inView =
+        cx >= view.scrollX && cx <= view.scrollX + view.width && cy >= view.scrollY && cy <= view.scrollY + view.height;
+      if (inView) {
+        box.remove();
+      } else {
+        // The study panel only knows the newest translation.
+        box.classList.add("stale");
+        delete box.dataset.index;
+      }
+    }
+    while (layer.childElementCount > MAX_BOXES) layer.firstElementChild.remove();
     layer.hidden = false;
     showStatus("Translating…", { spinner: true });
     armWatchdog();
@@ -143,15 +161,16 @@
     box.textContent = region.english;
     layer.append(box);
     fitText(box);
-    const n = layer.childElementCount;
+    const n = layer.querySelectorAll(".box:not(.stale)").length;
     showStatus(`Translating… ${n} bubble${n === 1 ? "" : "s"} so far`, { spinner: true });
   }
 
-  function finish({ count, seconds, note }) {
+  function finish({ count, seconds, cost, note }) {
     clearTimeout(watchdog);
+    const price = cost ? ` (about ${cost})` : "";
     const summary = count
-      ? `Translated ${count} text region${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s.`
-      : "No Japanese text found in view.";
+      ? `Translated ${count} text region${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s${price}.`
+      : `No Japanese text found in view${price}.`;
     showStatus(summary + (note ?? ""), { hideAfter: note ? 8000 : 3000 });
   }
 
@@ -194,6 +213,10 @@
     if (!box) return;
     e.preventDefault();
     e.stopPropagation();
+    if (box.dataset.index === undefined) {
+      showStatus("That bubble is from an earlier view. Press Alt+T here to study it.", { hideAfter: 4000 });
+      return;
+    }
     highlight(Number(box.dataset.index));
     chrome.runtime
       .sendMessage({ type: "focus-region", index: Number(box.dataset.index) })
@@ -228,7 +251,8 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     switch (msg.type) {
       case "prepare-capture":
-        clearOverlays();
+        // Hide (don't delete) our boxes so they stay out of the screenshot.
+        layer.hidden = true;
         status.hidden = true;
         // Wait for the browser to repaint without our UI before capturing.
         nextFrame().then(() =>
@@ -256,6 +280,7 @@
         break;
       case "error":
         clearTimeout(watchdog);
+        layer.hidden = false;
         showStatus(msg.message, { error: true, hideAfter: 10000 });
         break;
       case "set-sfx":
