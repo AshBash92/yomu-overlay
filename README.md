@@ -36,6 +36,9 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 | `claude.js` | Claude API calls, prompt, and the JSON shape of the answer |
 | `panel.html/js` | Study side panel: bubbles, word breakdowns, grammar, saved words |
 | `panel-open.js` | Opens the side panel (or a window if unsupported) |
+| `known.js` | Known words, and importing word lists or Anki exports |
+| `jlpt.js` | Approximate N5/N4 kanji lists |
+| `usage.js` | Cost estimates and the monthly total |
 | `wordlist.js` | Saved word list and Anki CSV export |
 | `content.js` | Draws the translation boxes on the page |
 | `popup.html/js` | Toolbar button menu |
@@ -56,3 +59,9 @@ Open it with Alt+Shift+S or the toolbar popup. It lists every bubble from the la
 1. In the panel, open **Saved words** and click **Export CSV for Anki**.
 2. In Anki: **File → Import**, pick the CSV. The columns are named automatically.
 3. Choose a note type and deck, map the fields you want (e.g. Word to Front; Reading, Meaning, Kanji, and Sentence to Back), then **Import**.
+
+## Learning profile
+
+Set your JLPT level on the options page. Grammar notes and word breakdowns are pitched at that level, and kanji from the bundled N5/N4 lists (approximate, from common study lists) count as known.
+
+In the study panel, words have two states besides new: **Learning** (saved; exported to Anki) and **Known**. Mark a word with **I know this**, or a whole bubble with **I knew every word**. Known words are stored by dictionary form, so every conjugation counts. The **Known** tab can import words you already know: paste one per line, or choose an Anki "Notes in Plain Text" export.

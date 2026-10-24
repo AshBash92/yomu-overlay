@@ -6,6 +6,7 @@ export const DEFAULTS = {
   model: "claude-haiku-5-5",
   effort: "medium",
   showSfx: false, // translate sound effects / onomatopoeia
+  level: "N4", // learner's JLPT level
 };
 
 export async function getSettings() {

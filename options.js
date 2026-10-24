@@ -12,6 +12,7 @@ const settings = await getSettings();
 $("apiKey").value = settings.apiKey;
 $("model").value = settings.model;
 $("effort").value = settings.effort;
+$("level").value = settings.level;
 
 $("reveal").addEventListener("click", () => {
   const hidden = $("apiKey").type === "password";
@@ -24,6 +25,7 @@ $("save").addEventListener("click", async () => {
     apiKey: $("apiKey").value.trim(),
     model: $("model").value,
     effort: $("effort").value,
+    level: $("level").value,
   });
   say("Saved.", "ok");
 });

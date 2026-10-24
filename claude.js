@@ -419,6 +419,13 @@ export async function translateImage({ apiKey, model, effort, showSfx, image, on
 
 // ---------- Study helpers ----------
 
+function forLevel(prompt, level) {
+  if (!level) return prompt;
+  return `${prompt}
+
+The learner is at about JLPT ${level}. Pitch explanations at that level: be brief about anything a ${level} learner already knows, and spend the words on what's above it.`;
+}
+
 function lineContext({ line, english, nearby }) {
   let text = `Line: ${line}\nEnglish translation: ${english}`;
   if (nearby?.length) text += `\nNearby lines on the same page:\n${nearby.map((l) => `- ${l}`).join("\n")}`;
@@ -426,12 +433,12 @@ function lineContext({ line, english, nearby }) {
 }
 
 /** Word-by-word breakdown of one line. Resolves with { reading, words }. */
-export async function breakdownLine({ apiKey, model, effort, line, english, nearby }) {
+export async function breakdownLine({ apiKey, model, effort, level, line, english, nearby }) {
   const { text, stopReason } = await streamMessage({
     apiKey,
     model,
     effort,
-    system: BREAKDOWN_PROMPT,
+    system: forLevel(BREAKDOWN_PROMPT, level),
     content: [{ type: "text", text: lineContext({ line, english, nearby }) }],
     schema: BREAKDOWN_SCHEMA,
     maxTokens: 8000,
@@ -441,12 +448,12 @@ export async function breakdownLine({ apiKey, model, effort, line, english, near
 }
 
 /** Short plain-text grammar explanation of one line. */
-export async function explainGrammar({ apiKey, model, effort, line, english, nearby }) {
+export async function explainGrammar({ apiKey, model, effort, level, line, english, nearby }) {
   const { text, stopReason } = await streamMessage({
     apiKey,
     model,
     effort,
-    system: GRAMMAR_PROMPT,
+    system: forLevel(GRAMMAR_PROMPT, level),
     content: [{ type: "text", text: lineContext({ line, english, nearby }) }],
     maxTokens: 4000,
   });

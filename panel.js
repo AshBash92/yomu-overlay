@@ -5,6 +5,8 @@
 import { getSettings } from "./settings.js";
 import { breakdownLine, explainGrammar, ApiError } from "./claude.js";
 import { getWords, saveWord, removeWord, clearWords, wordKey, wordsToCsv, kanjiText } from "./wordlist.js";
+import { getKnown, isKnown, markKnown, unmarkKnown, knownKey, kanjiInKnownWords, parseWordList } from "./known.js";
+import { levelOf, kanjiUpTo } from "./jlpt.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,6 +37,9 @@ const breakdowns = new Map(); // japanese -> { status, data?, error? }
 const grammars = new Map(); // japanese -> { status, text?, error? }
 let savedKeys = new Set();
 let words = [];
+let known = {}; // knownKey -> entry
+let level = "N4";
+let knownKanji = new Set(); // level list + kanji in known words
 
 // ---------- Which tab are we studying? ----------
 
@@ -75,7 +80,8 @@ function nearby(i) {
 async function cachedCall(map, prefix, region, i, call) {
   const k = region.japanese;
   if (map.get(k)?.status === "loading" || map.get(k)?.status === "done") return;
-  const storeKey = `${prefix}:${k}`;
+  // Answers depend on the learner's level, so cache per level.
+  const storeKey = `${prefix}:${level}:${k}`;
   const stored = (await chrome.storage.session.get(storeKey))[storeKey];
   if (stored) {
     map.set(k, { status: "done", value: stored });
@@ -149,7 +155,11 @@ function renderDetail(region) {
         words.map((w, wi) =>
           el(
             "button",
-            { class: wi === selectedWord ? "chip selected" : "chip", dataset: { action: "word", word: wi }, title: w.meaning },
+            {
+              class: ["chip", wi === selectedWord && "selected", isKnown(known, w) && "known"].filter(Boolean).join(" "),
+              dataset: { action: "word", word: wi },
+              title: w.meaning,
+            },
             el("span", { class: "r", lang: "ja" }, w.word === w.reading ? " " : w.reading),
             el("span", { class: "w", lang: "ja" }, w.word)
           )
@@ -160,6 +170,9 @@ function renderDetail(region) {
   }
 
   const actions = el("div", { class: "actions" });
+  if (bd?.status === "done" && bd.value.words.some((w) => !isKnown(known, w))) {
+    actions.append(el("button", { class: "btn", dataset: { action: "know-all" } }, "I knew every word"));
+  }
   if (!gr || gr.status === "error") {
     actions.append(el("button", { class: "btn", dataset: { action: "grammar" } }, "Explain grammar"));
   }
@@ -173,6 +186,7 @@ function renderDetail(region) {
 
 function renderWordCard(w, region) {
   const saved = savedKeys.has(wordKey(w));
+  const knownNow = isKnown(known, w);
   const dict = w.dictionaryForm && w.dictionaryForm !== w.word ? `Dictionary form: ${w.dictionaryForm}` : null;
   return el(
     "div",
@@ -189,9 +203,18 @@ function renderWordCard(w, region) {
         el("div", { class: "pos" }, w.partOfSpeech, dict && ` · ${dict}`)
       ),
       el(
-        "button",
-        { class: saved ? "btn saved" : "btn primary", dataset: { action: saved ? "unsave" : "save" } },
-        saved ? "Saved ✓" : "Save word"
+        "div",
+        { class: "buttons" },
+        el(
+          "button",
+          { class: saved ? "btn saved" : "btn primary", dataset: { action: saved ? "unsave" : "save" } },
+          saved ? "Saved ✓" : "Save word"
+        ),
+        el(
+          "button",
+          { class: knownNow ? "btn saved" : "btn", dataset: { action: knownNow ? "unknow" : "know" } },
+          knownNow ? "Known ✓" : "I know this"
+        )
       )
     ),
     w.kanji?.length > 0 &&
@@ -203,11 +226,20 @@ function renderWordCard(w, region) {
             "li",
             {},
             el("span", { class: "k", lang: "ja" }, k.character),
-            el("span", {}, el("span", { class: "sub", lang: "ja" }, k.reading), " · ", k.meaning)
+            el("span", { style: "flex: 1" }, el("span", { class: "sub", lang: "ja" }, k.reading), " · ", k.meaning),
+            kanjiTag(k.character)
           )
         )
       )
   );
+}
+
+// "N5 ✓" for kanji you should know at your level, "N3+" for harder ones.
+function kanjiTag(ch) {
+  const lvl = levelOf(ch);
+  const ok = knownKanji.has(ch);
+  const label = lvl ? `${lvl}${ok ? " ✓" : ""}` : ok ? "known ✓" : "N3+";
+  return el("span", { class: ok ? "tag ok" : "tag", title: ok ? "You know this kanji" : "Above your level" }, label);
 }
 
 // ---------- Rendering: saved words ----------
@@ -240,6 +272,36 @@ async function loadWords() {
   words = await getWords();
   savedKeys = new Set(words.map(wordKey));
   renderWords();
+}
+
+// ---------- Rendering: known words ----------
+
+function renderKnown() {
+  const entries = Object.values(known).sort((a, b) => (b.added ?? "").localeCompare(a.added ?? ""));
+  $("known-count").textContent = entries.length;
+  $("known-empty").hidden = entries.length > 0;
+  const fromList = kanjiUpTo(level).size;
+  $("kanji-summary").textContent =
+    `Your level: ${level} · ${knownKanji.size} kanji counted as known ` +
+    `(${fromList} from the N5${level === "N5" ? "" : "–N4"} list, plus kanji in your known words).`;
+  $("known-list").replaceChildren(
+    ...entries.map((k) =>
+      el(
+        "div",
+        { class: "known-row" },
+        el("span", { class: "ws", lang: "ja" }, k.word),
+        el("span", { class: "info" }, [k.reading, k.meaning].filter(Boolean).join(" · ")),
+        el("button", { class: "x", title: "Not known after all", dataset: { unknow: k.word } }, "×")
+      )
+    )
+  );
+}
+
+async function loadKnown() {
+  level = (await getSettings()).level;
+  known = await getKnown();
+  knownKanji = new Set([...kanjiUpTo(level), ...kanjiInKnownWords(known)]);
+  renderKnown();
 }
 
 // ---------- Interaction ----------
@@ -291,6 +353,15 @@ $("bubbles").addEventListener("click", async (e) => {
       await removeWord(wordKey(w));
       break;
     }
+    case "know":
+      await markKnown([breakdowns.get(region.japanese).value.words[selectedWord]]);
+      break;
+    case "unknow":
+      await unmarkKnown(knownKey(breakdowns.get(region.japanese).value.words[selectedWord]));
+      break;
+    case "know-all":
+      await markKnown(breakdowns.get(region.japanese).value.words);
+      break;
     case "retry-breakdown":
       breakdowns.delete(region.japanese);
       loadBreakdown(i);
@@ -331,14 +402,39 @@ $("clear-yes").addEventListener("click", async () => {
   $("clear-confirm").hidden = true;
 });
 
-function showTab(name) {
-  $("tab-page").setAttribute("aria-selected", name === "page");
-  $("tab-words").setAttribute("aria-selected", name === "words");
-  $("view-page").hidden = name !== "page";
-  $("view-words").hidden = name !== "words";
+$("known-list").addEventListener("click", (e) => {
+  const key = e.target.closest("[data-unknow]")?.dataset.unknow;
+  if (key) unmarkKnown(key);
+});
+
+async function importWords(text) {
+  const found = parseWordList(text);
+  const before = Object.keys(known).length;
+  await markKnown(found.map((word) => ({ word })), "import");
+  const added = Object.keys(await getKnown()).length - before;
+  $("import-result").textContent = found.length
+    ? `Added ${added} new word${added === 1 ? "" : "s"} (${found.length - added} already known).`
+    : "No Japanese words found.";
 }
-$("tab-page").addEventListener("click", () => showTab("page"));
-$("tab-words").addEventListener("click", () => showTab("words"));
+
+$("import-paste").addEventListener("click", async () => {
+  await importWords($("import-text").value);
+  $("import-text").value = "";
+});
+$("import-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (file) await importWords(await file.text());
+  e.target.value = "";
+});
+
+const TABS = ["page", "words", "known"];
+function showTab(name) {
+  for (const t of TABS) {
+    $(`tab-${t}`).setAttribute("aria-selected", name === t);
+    $(`view-${t}`).hidden = name !== t;
+  }
+}
+for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => showTab(t));
 
 // Ctrl+click on the page stores a "focus" request; jump to that bubble.
 async function handleFocus(focus) {
@@ -367,6 +463,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.words) {
     loadWords().then(renderPage);
   }
+  if (area === "local" && (changes.known || changes.level)) {
+    if (changes.level) {
+      // Cached answers were pitched at the old level.
+      breakdowns.clear();
+      grammars.clear();
+    }
+    loadKnown().then(() => {
+      renderPage();
+      if (changes.level && openIndex >= 0) loadBreakdown(openIndex);
+    });
+  }
 });
 
 chrome.tabs.onActivated.addListener(loadPage);
@@ -377,5 +484,6 @@ chrome.windows.onFocusChanged.addListener((id) => {
 // ---------- Start ----------
 
 await loadWords();
+await loadKnown();
 await loadPage();
 handleFocus((await chrome.storage.session.get("focus")).focus);
