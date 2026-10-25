@@ -90,6 +90,31 @@
         align-items: center;
       }
       .status.error { background: #b71c1c; }
+      .controls {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        border-radius: 999px;
+        background: rgba(31, 31, 31, 0.85);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        pointer-events: auto;
+        opacity: 0.6;
+        transition: opacity 0.15s;
+      }
+      .controls:hover { opacity: 1; }
+      .controls button {
+        all: unset;
+        cursor: pointer;
+        padding: 4px 10px;
+        border-radius: 999px;
+        color: #fff;
+        font: 600 12px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+      }
+      .controls button:hover { background: rgba(255, 255, 255, 0.18); }
+      .controls button.on { background: #d84315; }
       .spinner {
         width: 12px; height: 12px; flex: none;
         border: 2px solid rgba(255, 255, 255, 0.35);
@@ -103,12 +128,20 @@
     <div class="layer"></div>
     <div class="card" hidden></div>
     <div class="status" hidden></div>
+    <div class="controls" hidden>
+      <button class="hide" title="Hide or show the translation boxes">Hide</button>
+      <button class="reveal" title="Show English for every bubble">Show English</button>
+      <button class="close" title="Remove the translation boxes from this page">✕</button>
+    </div>
   `;
   document.documentElement.appendChild(host);
 
   const layer = shadow.querySelector(".layer");
   const card = shadow.querySelector(".card");
   const status = shadow.querySelector(".status");
+  const controls = shadow.querySelector(".controls");
+  const hideBtn = controls.querySelector(".hide");
+  const revealBtn = controls.querySelector(".reveal");
   let statusTimer;
   let lastUrl = location.href;
 
@@ -136,7 +169,52 @@
   function clearOverlays() {
     layer.replaceChildren();
     setHover(null);
+    updateControls();
   }
+
+  // ---------- On-page buttons ----------
+
+  function updateControls() {
+    controls.hidden = !layer.childElementCount;
+    hideBtn.textContent = layer.hidden ? "Show" : "Hide";
+    hideBtn.classList.toggle("on", layer.hidden);
+    revealBtn.hidden = display.mode === "english" || layer.hidden;
+    revealBtn.textContent = revealAll ? "Hide English" : "Show English";
+    revealBtn.classList.toggle("on", revealAll);
+  }
+
+  function toggleLayer() {
+    if (!layer.childElementCount) {
+      showStatus("Nothing to show yet. Press Alt+T to translate.", { hideAfter: 2500 });
+      return;
+    }
+    layer.hidden = !layer.hidden;
+    if (layer.hidden) setHover(null);
+    updateControls();
+  }
+
+  function toggleReveal() {
+    if (!layer.childElementCount) {
+      showStatus("Nothing to reveal yet. Press Alt+T to translate.", { hideAfter: 2500 });
+      return;
+    }
+    revealAll = !revealAll;
+    layer.hidden = false;
+    setHover(null);
+    renderAll();
+    updateControls();
+  }
+
+  // Clicks on the buttons must not reach the page (it might turn the page).
+  for (const type of ["click", "mousedown", "mouseup", "pointerdown", "pointerup"]) {
+    controls.addEventListener(type, (e) => e.stopPropagation());
+  }
+  hideBtn.addEventListener("click", toggleLayer);
+  revealBtn.addEventListener("click", toggleReveal);
+  controls.querySelector(".close").addEventListener("click", () => {
+    clearOverlays();
+    showStatus("Translations removed. Press Alt+T to translate again.", { hideAfter: 2500 });
+  });
 
   // ---------- Rendering one bubble ----------
 
@@ -322,6 +400,7 @@
     while (layer.childElementCount > MAX_BOXES) layer.firstElementChild.remove();
     layer.hidden = false;
     renderAll();
+    updateControls();
     showStatus("Translating…", { spinner: true });
     armWatchdog();
   }
@@ -349,6 +428,7 @@
     box.style.height = `${h}px`;
     layer.append(box);
     renderBox(box);
+    updateControls();
     const n = layer.querySelectorAll(".box:not(.stale)").length;
     showStatus(`Translating… ${n} bubble${n === 1 ? "" : "s"} so far`, { spinner: true });
   }
@@ -435,6 +515,7 @@
     if (mode) display.mode = mode;
     if (furigana) display.furigana = furigana;
     renderAll();
+    updateControls();
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -444,6 +525,7 @@
         layer.hidden = true;
         card.hidden = true;
         status.hidden = true;
+        controls.hidden = true;
         // Wait for the browser to repaint without our UI before capturing.
         nextFrame().then(() =>
           sendResponse({
@@ -472,6 +554,7 @@
       case "error":
         clearTimeout(watchdog);
         layer.hidden = false;
+        updateControls();
         showStatus(msg.message, { error: true, hideAfter: 10000 });
         break;
       case "set-sfx":
@@ -484,25 +567,10 @@
         break;
       }
       case "reveal":
-        if (!layer.childElementCount) {
-          showStatus("Nothing to reveal yet. Press Alt+T to translate.", { hideAfter: 2500 });
-          break;
-        }
-        revealAll = !revealAll;
-        layer.hidden = false;
-        setHover(null);
-        renderAll();
-        showStatus(revealAll ? "Showing English for every bubble. Press again to hide." : "English hidden.", {
-          hideAfter: 2500,
-        });
+        toggleReveal();
         break;
       case "toggle":
-        if (!layer.childElementCount) {
-          showStatus("Nothing to show yet. Press Alt+T to translate.", { hideAfter: 2500 });
-        } else {
-          layer.hidden = !layer.hidden;
-          if (layer.hidden) setHover(null);
-        }
+        toggleLayer();
         break;
     }
   });

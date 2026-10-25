@@ -23,7 +23,7 @@ To change the hotkey, go to `brave://extensions/shortcuts`.
 | Action | Default |
 | --- | --- |
 | Translate what's visible | Alt+T |
-| Show / hide overlays | Alt+Shift+T |
+| Show / hide overlays | Alt+H (or the on-page **Hide** button) |
 | Reveal English for every bubble (read-first / hover modes) | Alt+Shift+E |
 | Open the study panel | Alt+Shift+S |
 | Study one bubble | Ctrl+click its translation |

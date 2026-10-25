@@ -26,7 +26,7 @@
       "description": "Translate what's visible in this tab"
     },
     "toggle-overlay": {
-      "suggested_key": { "default": "Alt+Shift+T" },
+      "suggested_key": { "default": "Alt+H" },
       "description": "Show or hide the translation overlays"
     },
     "reveal-english": {
