@@ -30,7 +30,7 @@ export class ApiError extends Error {
 
 // ---------- Prompts and schemas ----------
 
-const TRANSLATE_PROMPT = `You translate Japanese manga for an English-speaking reader who is learning Japanese.
+const TRANSLATE_PROMPT = `You translate Japanese manga for an English-speaking reader.
 
 You receive a screenshot of the visible part of a web page. Find every region of Japanese text that is part of the manga artwork: speech bubbles, thought bubbles, narration boxes, sound effects, and signs. Ignore website UI, menus, ads, page numbers, and comments.
 
@@ -48,7 +48,7 @@ The reader can already read sound effects, so skip them: leave out onomatopoeia 
 
 const READINGS = `
 
-Also give segments for each region: the japanese text split into words, in order, so that joining every segment's text reproduces the japanese text exactly (punctuation included). For a segment containing kanji, give its reading in hiragana as read in this line, and its dictionary form. For other segments, leave reading and dictionaryForm empty.`;
+The reader is learning Japanese. Also give segments for each region: the japanese text split into words, in order, so that joining every segment's text reproduces the japanese text exactly (punctuation included). For a segment containing kanji, give its reading in hiragana as read in this line, and its dictionary form. For other segments, leave reading and dictionaryForm empty.`;
 
 const SEGMENTS_SCHEMA = {
   type: "array",
@@ -274,7 +274,7 @@ async function* readEvents(res, onData) {
  * Calls onText with each chunk of answer text. Resolves with
  * { text, stopReason, stats }.
  */
-async function streamMessage({ apiKey, model, effort, system, content, schema, maxTokens = 16000, onText }) {
+async function streamMessage({ apiKey, model, effort, system, content, schema, maxTokens = 16000, onText, signal }) {
   const useFallback = FALLBACK_MODELS.has(model);
   const body = {
     model,
@@ -291,6 +291,9 @@ async function streamMessage({ apiKey, model, effort, system, content, schema, m
   const stats = { model, inputTokens: 0, outputTokens: 0, firstByteMs: 0, totalMs: 0 };
   const controller = new AbortController();
   const timer = idleTimer(controller);
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  signal?.addEventListener("abort", cancel, { once: true });
   let text = "";
   let stopReason = null;
 
@@ -333,9 +336,15 @@ async function streamMessage({ apiKey, model, effort, system, content, schema, m
       }
     }
   } catch (err) {
+    if (signal?.aborted) {
+      // The input was still billed, so keep it in the monthly estimate.
+      if (stats.inputTokens) recordUsage(estimateCost(stats.model, stats.inputTokens, stats.outputTokens)).catch(() => {});
+      throw new ApiError("cancelled", "Translation cancelled.");
+    }
     throw networkError(err);
   } finally {
     timer.stop();
+    signal?.removeEventListener("abort", cancel);
   }
 
   stats.totalMs = performance.now() - started;
@@ -411,7 +420,7 @@ class RegionExtractor {
  * region as soon as it's complete. Resolves with { regions, stopReason, stats }.
  * image: { mediaType, data } where data is base64 without the data: prefix.
  */
-export async function translateImage({ apiKey, model, effort, showSfx, withReadings, image, onRegion }) {
+export async function translateImage({ apiKey, model, effort, showSfx, withReadings, image, onRegion, signal }) {
   const started = performance.now();
   let firstRegionMs = 0;
   const regions = [];
@@ -434,6 +443,7 @@ export async function translateImage({ apiKey, model, effort, showSfx, withReadi
       { type: "text", text: "Translate the manga text in this screenshot." },
     ],
     schema: translateSchema(withReadings),
+    signal,
     onText: (chunk) => extractor.push(chunk),
   });
   stats.firstRegionMs = firstRegionMs;

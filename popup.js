@@ -35,26 +35,44 @@ $("shortcuts").addEventListener("click", () => chrome.tabs.create({ url: "chrome
 const commands = await chrome.commands.getAll();
 for (const c of commands) {
   const label = c.shortcut || "not set";
-  if (c.name === "translate-visible") $("translate-key").textContent = label;
-  if (c.name === "toggle-overlay") $("toggle-key").textContent = label;
+  if (c.name === "translate-visible") $("translate-key").textContent = $("english-translate-key").textContent = label;
+  if (c.name === "toggle-overlay") $("toggle-key").textContent = $("english-toggle-key").textContent = label;
   if (c.name === "open-study-panel") $("study-key").textContent = label;
   if (c.name === "reveal-english") $("reveal-key").textContent = label;
 }
 
-const { apiKey, showSfx, model, displayMode, furigana } = await getSettings();
+const { apiKey, showSfx, model, displayMode, furigana, autoTranslate } = await getSettings();
+$("autoTranslate").checked = autoTranslate;
+$("autoTranslate").addEventListener("change", async (e) => {
+  await saveSettings({ autoTranslate: e.target.checked });
+  showControlsFor(document.querySelector("input[name=mode]:checked").value);
+  const tab = await activeTab();
+  if (e.target.checked && tab) chrome.runtime.sendMessage({ type: "popup-auto", tab });
+});
+
+// People who just want English don't need the study controls.
+function showControlsFor(mode) {
+  const english = mode === "english";
+  $("study").hidden = $("furigana-row").hidden = $("reveal-hint").hidden = english;
+  $("english-hint").hidden = $("auto-row").hidden = !english;
+  $("english-when").textContent = $("autoTranslate").checked ? "once to start, then just read" : "on each new page";
+}
 
 // Display mode and furigana: save, then update bubbles already on the page.
 async function applyDisplay() {
   const mode = document.querySelector("input[name=mode]:checked").value;
   const fur = $("furigana").value;
-  $("furigana-row").hidden = $("reveal-hint").hidden = mode === "english";
+  showControlsFor(mode);
   await saveSettings({ displayMode: mode, furigana: fur });
   const tab = await activeTab();
-  if (tab) chrome.tabs.sendMessage(tab.id, { type: "set-display", mode, furigana: fur }).catch(() => {});
+  if (tab) {
+    chrome.tabs.sendMessage(tab.id, { type: "set-display", mode, furigana: fur }).catch(() => {});
+    if (mode === "english") chrome.runtime.sendMessage({ type: "popup-auto", tab });
+  }
 }
 document.querySelector(`input[name=mode][value="${displayMode}"]`).checked = true;
 $("furigana").value = furigana;
-$("furigana-row").hidden = $("reveal-hint").hidden = displayMode === "english";
+showControlsFor(displayMode);
 for (const input of document.querySelectorAll("input[name=mode]")) input.addEventListener("change", applyDisplay);
 $("furigana").addEventListener("change", applyDisplay);
 

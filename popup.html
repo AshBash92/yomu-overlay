@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Yomu Overlay</title>
@@ -19,8 +19,12 @@
     .field select { font: inherit; padding: 2px; max-width: 170px; }
     .hint { font-size: 12px; color: #555; margin-bottom: 10px; }
     .switch { display: flex; align-items: center; gap: 6px; margin: 2px 0 12px; cursor: pointer; }
+    .switch.auto { align-items: flex-start; margin-bottom: 6px; }
+    .switch.auto input { margin-top: 3px; }
+    .switch small { display: block; color: #555; font-size: 12px; }
     .links { display: flex; justify-content: space-between; font-size: 12px; }
-    a { color: #1565c0; cursor: pointer; text-decoration: none; }
+    .links button { width: auto; margin: 0; padding: 0; border: 0; background: none; color: #1565c0; }
+    .links button:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -31,23 +35,24 @@
   <button id="toggle">Show / hide overlays <kbd id="toggle-key"></kbd></button>
   <button id="study">Open study panel <kbd id="study-key"></kbd></button>
   <fieldset class="modes">
-    <legend>Show bubbles as</legend>
-    <label><input type="radio" name="mode" value="english"> English</label>
-    <label><input type="radio" name="mode" value="read-first"> Read first: Japanese, hover for English</label>
-    <label><input type="radio" name="mode" value="hover"> Original page, hover for help</label>
+    <legend>How do you want to read?</legend>
+    <label><input type="radio" name="mode" value="study"> <span><strong>Learn Japanese</strong><br>Try it first, then ask for hints</span></label>
+    <label><input type="radio" name="mode" value="english"> <span><strong>Just read English</strong><br>Translations cover each bubble</span></label>
   </fieldset>
-  <label class="field" id="furigana-row">Furigana
+  <label class="switch auto" id="auto-row"><input id="autoTranslate" type="checkbox"> <span>Translate new pages automatically<small>Each new page uses API credits</small></span></label>
+  <div class="hint" id="english-hint">Press <kbd id="english-translate-key"></kbd> <span id="english-when"></span>. <kbd id="english-toggle-key"></kbd> switches between English and the original.</div>
+  <label class="field" id="furigana-row">Furigana hint
     <select id="furigana">
       <option value="above-level">Kanji above my level</option>
       <option value="unknown-words">Every word I haven't marked known</option>
       <option value="off">Off</option>
     </select>
   </label>
-  <div class="hint" id="reveal-hint">Reveal all English: <kbd id="reveal-key"></kbd></div>
+  <div class="hint" id="reveal-hint">Over a bubble: <kbd>C</kbd> text, <kbd>F</kbd> furigana, <kbd>W</kbd> words, <kbd>E</kbd> English. Show all English: <kbd id="reveal-key"></kbd></div>
   <label class="switch"><input id="showSfx" type="checkbox"> Translate sound effects</label>
   <div class="links">
-    <a id="options">Options</a>
-    <a id="shortcuts">Change hotkeys</a>
+    <button id="options">Options</button>
+    <button id="shortcuts">Change hotkeys</button>
   </div>
   <script type="module" src="popup.js"></script>
 </body>

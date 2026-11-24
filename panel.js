@@ -4,7 +4,7 @@
 
 import { getSettings } from "./settings.js";
 import { breakdownLine, explainGrammar, ApiError } from "./claude.js";
-import { getWords, saveWord, removeWord, clearWords, wordKey, wordsToCsv, kanjiText } from "./wordlist.js";
+import { getWords, saveWord, removeWord, clearWords, wordKey, wordsToCsv, kanjiText, sourceUrl } from "./wordlist.js";
 import { getKnown, isKnown, markKnown, unmarkKnown, knownKey, kanjiInKnownWords, parseWordList } from "./known.js";
 import { levelOf, kanjiUpTo } from "./jlpt.js";
 
@@ -40,6 +40,24 @@ let words = [];
 let known = {}; // knownKey -> entry
 let level = "N4";
 let knownKanji = new Set(); // level list + kanji in known words
+let displayMode = "study";
+let study = {}; // bubble index -> { english, rating, looked }
+let reviewOnly = false;
+
+const RATINGS = [
+  ["got", "Got it"],
+  ["partly", "Partly"],
+  ["missed", "Missed it"],
+];
+const isStudy = () => displayMode === "study";
+const bubbleState = (i) => study[i] ?? { english: false, rating: null, looked: [] };
+
+// Reveals and ratings go through the background worker, which keeps the
+// overlay on the page in step.
+function sendStudy(i, patch) {
+  if (tabId == null || !page) return;
+  chrome.runtime.sendMessage({ type: "study-update", tabId, pageId: page.id, indices: [i], ...patch }).catch(() => {});
+}
 
 // ---------- Which tab are we studying? ----------
 
@@ -57,12 +75,16 @@ async function loadPage() {
   const tab = await currentTab();
   tabId = tab?.id ?? null;
   const key = `tab:${tabId}`;
-  const next = tabId == null ? null : (await chrome.storage.session.get(key))[key] ?? null;
+  const studyKey = `study:${tabId}`;
+  const stored = tabId == null ? {} : await chrome.storage.session.get([key, studyKey]);
+  const next = stored[key] ?? null;
   if (next?.id !== page?.id) {
     openIndex = -1;
     selectedWord = -1;
+    reviewOnly = false;
   }
   page = next;
+  study = stored[studyKey]?.pageId === next?.id ? stored[studyKey]?.bubbles ?? {} : {};
   renderPage();
 }
 
@@ -113,33 +135,103 @@ function renderPage() {
   $("page-meta").hidden = !regions.length;
   if (page?.translatedAt) {
     const time = new Date(page.translatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    $("page-meta").textContent = `${regions.length} bubble${regions.length === 1 ? "" : "s"} · translated ${time}`;
+    const rated = regions.filter((_, i) => bubbleState(i).rating).length;
+    const count = isStudy()
+      ? `${rated} of ${regions.length} read`
+      : `${regions.length} bubble${regions.length === 1 ? "" : "s"}`;
+    $("page-meta").textContent = `${count} · translated ${time}`;
   }
-  $("bubbles").replaceChildren(...regions.map(renderBubble));
+  renderRecap(regions);
+  const focus = focusedControl();
+  const shown = regions
+    .map((region, i) => ({ region, i }))
+    .filter(({ i }) => !reviewOnly || bubbleState(i).rating !== "got");
+  $("bubbles").replaceChildren(...shown.map(({ region, i }) => renderBubble(region, i)));
+  restoreFocus(focus);
+}
+
+// Sums up the page once every bubble has a rating.
+function renderRecap(regions) {
+  const box = $("recap");
+  const states = regions.map((_, i) => bubbleState(i));
+  const done = isStudy() && regions.length > 0 && states.every((s) => s.rating);
+  box.hidden = !done;
+  if (!done) {
+    reviewOnly = false;
+    return;
+  }
+  const got = states.filter((s) => s.rating === "got").length;
+  const review = regions.length - got;
+  if (!review) reviewOnly = false;
+  const sentences = new Set(regions.map((r) => r.japanese));
+  const saved = words.filter((w) => sentences.has(w.sentence)).length;
+  box.replaceChildren(
+    ...[
+      el("strong", {}, "Page done"),
+      el("span", {}, `${got} of ${regions.length} understood`),
+      review > 0 && el("span", {}, `${review} to review`),
+      saved > 0 && el("span", {}, `${saved} word${saved === 1 ? "" : "s"} in Learning`),
+      review > 0 && el("button", { id: "review-toggle", class: "btn" }, reviewOnly ? "Show all" : "Review these"),
+    ].filter(Boolean)
+  );
+}
+
+// The list is rebuilt on every update, so put keyboard focus back on the
+// same control afterwards.
+function focusedControl() {
+  const active = document.activeElement;
+  const bubble = active?.closest?.("#bubbles .bubble");
+  if (!bubble) return null;
+  const { focusKey, action, word } = active.dataset;
+  return { index: bubble.dataset.index, key: focusKey ?? action, word };
+}
+
+function restoreFocus(focus) {
+  if (!focus) return;
+  const bubble = document.querySelector(`.bubble[data-index="${focus.index}"]`);
+  if (!bubble) return;
+  const controls = [...bubble.querySelectorAll("[data-action]")];
+  const match = controls.find(
+    (c) => (c.dataset.focusKey ?? c.dataset.action) === focus.key && c.dataset.word === focus.word
+  );
+  (match ?? bubble.querySelector("header")).focus({ preventScroll: true });
 }
 
 function renderBubble(region, i) {
   const open = i === openIndex;
+  const st = bubbleState(i);
+  // In read-first mode the English stays hidden until you ask for it.
+  const showEnglish = !isStudy() || st.english;
+  const ratingLabel = RATINGS.find(([r]) => r === st.rating)?.[1];
   return el(
     "article",
     { class: open ? "bubble open" : "bubble", dataset: { index: i } },
     el(
       "header",
-      { dataset: { action: "toggle" } },
+      { dataset: { action: "toggle" }, role: "button", tabindex: 0, "aria-expanded": String(open) },
       el("span", { class: "num" }, i + 1),
-      el("div", {}, el("p", { class: "ja", lang: "ja" }, region.japanese), el("p", { class: "en" }, region.english))
+      el(
+        "div",
+        { class: "line" },
+        el("p", { class: "ja", lang: "ja" }, region.japanese),
+        showEnglish && el("p", { class: "en" }, region.english)
+      ),
+      isStudy() && ratingLabel && el("span", { class: `badge ${st.rating}` }, ratingLabel)
     ),
-    open && renderDetail(region)
+    open && renderDetail(region, i)
   );
 }
 
-function renderDetail(region) {
+function renderDetail(region, i) {
   const bd = breakdowns.get(region.japanese);
   const gr = grammars.get(region.japanese);
+  const st = bubbleState(i);
   const parts = [];
 
-  if (!bd || bd.status === "loading") {
+  if (bd?.status === "loading" || (!bd && !isStudy())) {
     parts.push(el("p", { class: "loading" }, "Breaking down this line…"));
+  } else if (!bd) {
+    // Read-first: nothing is looked up until you ask.
   } else if (bd.status === "error") {
     parts.push(
       el("p", { class: "error" }, bd.error, " "),
@@ -170,6 +262,12 @@ function renderDetail(region) {
   }
 
   const actions = el("div", { class: "actions" });
+  if (isStudy() && !st.english) {
+    actions.append(el("button", { class: "btn primary", dataset: { action: "reveal" } }, "Show English"));
+  }
+  if (isStudy() && !bd) {
+    actions.append(el("button", { class: "btn", dataset: { action: "word-help" } }, "Word help"));
+  }
   if (bd?.status === "done" && bd.value.words.some((w) => !isKnown(known, w))) {
     actions.append(el("button", { class: "btn", dataset: { action: "know-all" } }, "I knew every word"));
   }
@@ -180,6 +278,26 @@ function renderDetail(region) {
   if (gr?.status === "loading") parts.push(el("p", { class: "loading" }, "Explaining the grammar…"));
   if (gr?.status === "error") parts.push(el("p", { class: "error" }, gr.error));
   if (gr?.status === "done") parts.push(el("div", { class: "grammar" }, gr.value));
+  if (isStudy() && st.english) {
+    parts.push(
+      el(
+        "div",
+        { class: "rating", role: "group", "aria-label": "Did you get it?" },
+        el("span", { class: "label" }, "Did you get it?"),
+        RATINGS.map(([rating, label]) =>
+          el(
+            "button",
+            {
+              class: "btn",
+              "aria-pressed": String(st.rating === rating),
+              dataset: { action: "rate", rating, focusKey: `rate-${rating}` },
+            },
+            label
+          )
+        )
+      )
+    );
+  }
 
   return el("div", { class: "detail" }, parts);
 }
@@ -207,12 +325,12 @@ function renderWordCard(w, region) {
         { class: "buttons" },
         el(
           "button",
-          { class: saved ? "btn saved" : "btn primary", dataset: { action: saved ? "unsave" : "save" } },
+          { class: saved ? "btn saved" : "btn primary", dataset: { action: saved ? "unsave" : "save", focusKey: "save" } },
           saved ? "Saved ✓" : "Save word"
         ),
         el(
           "button",
-          { class: knownNow ? "btn saved" : "btn", dataset: { action: knownNow ? "unknow" : "know" } },
+          { class: knownNow ? "btn saved" : "btn", dataset: { action: knownNow ? "unknow" : "know", focusKey: "know" } },
           knownNow ? "Known ✓" : "I know this"
         )
       )
@@ -262,7 +380,7 @@ function renderWords() {
           w.kanji?.length > 0 && el("div", { class: "ctx", lang: "ja" }, kanjiText(w.kanji)),
           w.sentence && el("div", { class: "ctx", lang: "ja" }, `「${w.sentence}」`)
         ),
-        el("button", { class: "x", title: "Remove", dataset: { remove: wordKey(w) } }, "×")
+        el("button", { class: "x", title: "Remove", "aria-label": `Remove ${w.word}`, dataset: { remove: wordKey(w) } }, "×")
       )
     )
   );
@@ -291,14 +409,16 @@ function renderKnown() {
         { class: "known-row" },
         el("span", { class: "ws", lang: "ja" }, k.word),
         el("span", { class: "info" }, [k.reading, k.meaning].filter(Boolean).join(" · ")),
-        el("button", { class: "x", title: "Not known after all", dataset: { unknow: k.word } }, "×")
+        el("button", { class: "x", title: "Not known after all", "aria-label": `Remove ${k.word} from known words`, dataset: { unknow: k.word } }, "×")
       )
     )
   );
 }
 
 async function loadKnown() {
-  level = (await getSettings()).level;
+  const settings = await getSettings();
+  level = settings.level;
+  displayMode = settings.displayMode;
   known = await getKnown();
   knownKanji = new Set([...kanjiUpTo(level), ...kanjiInKnownWords(known)]);
   renderKnown();
@@ -315,7 +435,7 @@ function openBubble(i, { scroll = false } = {}) {
   if (openIndex !== i) selectedWord = -1;
   openIndex = i;
   renderPage();
-  loadBreakdown(i);
+  if (!isStudy()) loadBreakdown(i);
   highlightOnPage(i);
   if (scroll) document.querySelector(`.bubble[data-index="${i}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
 }
@@ -340,12 +460,24 @@ $("bubbles").addEventListener("click", async (e) => {
     case "word": {
       const wi = Number(target.dataset.word);
       selectedWord = selectedWord === wi ? -1 : wi;
+      if (isStudy() && selectedWord === wi) {
+        sendStudy(i, { look: breakdowns.get(region.japanese).value.words[wi].word });
+      }
       renderPage();
       break;
     }
+    case "reveal":
+      sendStudy(i, { english: true });
+      break;
+    case "word-help":
+      loadBreakdown(i);
+      break;
+    case "rate":
+      sendStudy(i, { rating: target.dataset.rating });
+      break;
     case "save": {
       const w = breakdowns.get(region.japanese).value.words[selectedWord];
-      await saveWord({ ...w, sentence: region.japanese, sentenceEnglish: region.english, source: page.url ?? "" });
+      await saveWord({ ...w, sentence: region.japanese, sentenceEnglish: region.english, source: sourceUrl(page.url) });
       break;
     }
     case "unsave": {
@@ -371,6 +503,20 @@ $("bubbles").addEventListener("click", async (e) => {
       loadGrammar(i);
       break;
   }
+});
+
+// Bubble headers act as buttons, so Enter and Space open them too.
+$("bubbles").addEventListener("keydown", (e) => {
+  if ((e.key !== "Enter" && e.key !== " ") || !e.target.matches("header[data-action]")) return;
+  e.preventDefault();
+  e.target.click();
+});
+
+$("recap").addEventListener("click", (e) => {
+  if (e.target.id !== "review-toggle") return;
+  reviewOnly = !reviewOnly;
+  renderPage();
+  $("review-toggle")?.focus();
 });
 
 $("word-list").addEventListener("click", (e) => {
@@ -454,8 +600,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
       if (next?.id !== page?.id) {
         openIndex = -1;
         selectedWord = -1;
+        reviewOnly = false;
       }
       page = next;
+      renderPage();
+    }
+    if (changes[`study:${tabId}`]) {
+      const next = changes[`study:${tabId}`].newValue;
+      study = next?.pageId === page?.id ? next?.bubbles ?? {} : {};
       renderPage();
     }
     if (changes.focus?.newValue) handleFocus(changes.focus.newValue);
@@ -463,7 +615,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.words) {
     loadWords().then(renderPage);
   }
-  if (area === "local" && (changes.known || changes.level)) {
+  if (area === "local" && (changes.known || changes.level || changes.displayMode)) {
     if (changes.level) {
       // Cached answers were pitched at the old level.
       breakdowns.clear();
@@ -471,7 +623,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     loadKnown().then(() => {
       renderPage();
-      if (changes.level && openIndex >= 0) loadBreakdown(openIndex);
+      if (changes.level && openIndex >= 0 && !isStudy()) loadBreakdown(openIndex);
     });
   }
 });

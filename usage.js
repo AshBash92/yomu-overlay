@@ -1,5 +1,5 @@
 // Rough cost tracking. Prices are USD per million tokens (Anthropic list
-// prices as of Oct 2026). The real bill is at console.anthropic.com.
+// prices as of Oct 2026). The real bill is at platform.claude.com.
 
 export const PRICES = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },

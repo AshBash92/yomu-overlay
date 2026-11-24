@@ -7,13 +7,17 @@ export const DEFAULTS = {
   effort: "medium",
   showSfx: false, // translate sound effects / onomatopoeia
   level: "N4", // learner's JLPT level
-  displayMode: "english", // "english" | "read-first" | "hover"
+  displayMode: "study", // "study" (read first, ask for hints) | "english"
   furigana: "above-level", // "above-level" | "unknown-words" | "off"
+  autoTranslate: false, // English mode: translate new pages as you reach them
 };
 
 export async function getSettings() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
-  return { ...DEFAULTS, ...stored };
+  const settings = { ...DEFAULTS, ...stored };
+  // Older versions had separate "read-first" and "hover" modes.
+  if (settings.displayMode !== "english") settings.displayMode = "study";
+  return settings;
 }
 
 export async function saveSettings(values) {

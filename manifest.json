@@ -5,6 +5,9 @@
   "description": "Translate Japanese manga on screen into English with Claude, and learn kanji as you read.",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
   "host_permissions": ["https://api.anthropic.com/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; connect-src https://api.anthropic.com data:"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -31,7 +34,7 @@
     },
     "reveal-english": {
       "suggested_key": { "default": "Alt+Shift+E" },
-      "description": "Show or hide English for every bubble (read-first and hover modes)"
+      "description": "Show or hide English for every bubble (Learn Japanese mode)"
     },
     "open-study-panel": {
       "suggested_key": { "default": "Alt+Shift+S" },

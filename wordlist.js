@@ -41,10 +41,29 @@ const COLUMNS = [
   "Added",
 ];
 
+/**
+ * The page a word came from, without its query string or fragment, which
+ * can hold session tokens or signed links. Empty for non-web pages.
+ */
+export function sourceUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) ? `${u.origin}${u.pathname}` : "";
+  } catch {
+    return "";
+  }
+}
+
+// Spreadsheets run cells starting with these as formulas, and this text
+// comes from web pages. A zero-width space stops that without showing up
+// on Anki cards (an apostrophe would, on meanings like "-san").
+const FORMULA_START = /^\s*[=+\-@＝＋－＠]/;
+const defuseFormula = (s) => (FORMULA_START.test(s) ? `​${s}` : s);
+
 // Anki (2.1.55+) reads the # header lines to pick the separator and
 // name the columns, so the import dialog needs no setup.
 export function wordsToCsv(words) {
-  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const cell = (v) => `"${defuseFormula(String(v ?? "")).replace(/"/g, '""')}"`;
   const lines = ["#separator:comma", "#html:false", `#columns:${COLUMNS.join(",")}`];
   for (const w of words) {
     lines.push(
@@ -57,7 +76,7 @@ export function wordsToCsv(words) {
         kanjiText(w.kanji),
         w.sentence,
         w.sentenceEnglish,
-        w.source,
+        sourceUrl(w.source),
         w.added?.slice(0, 10),
       ]
         .map(cell)

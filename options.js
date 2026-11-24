@@ -14,6 +14,26 @@ $("model").value = settings.model;
 $("effort").value = settings.effort;
 $("level").value = settings.level;
 
+// Saved right away, so it can't overwrite a change made in the popup.
+document.querySelector(`input[name=mode][value="${settings.displayMode}"]`).checked = true;
+function showControlsFor(mode) {
+  $("learner").hidden = mode === "english";
+  $("auto-row").hidden = mode !== "english";
+}
+showControlsFor(settings.displayMode);
+for (const input of document.querySelectorAll("input[name=mode]")) {
+  input.addEventListener("change", async () => {
+    showControlsFor(input.value);
+    await saveSettings({ displayMode: input.value });
+    say("Reading mode saved.", "ok");
+  });
+}
+$("autoTranslate").checked = settings.autoTranslate;
+$("autoTranslate").addEventListener("change", async (e) => {
+  await saveSettings({ autoTranslate: e.target.checked });
+  say(e.target.checked ? "Auto-translate is on." : "Auto-translate is off.", "ok");
+});
+
 $("reveal").addEventListener("click", () => {
   const hidden = $("apiKey").type === "password";
   $("apiKey").type = hidden ? "text" : "password";
